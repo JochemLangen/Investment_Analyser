@@ -3,12 +3,20 @@ import pandas as pd
 import numpy as np
 import os
 
-class security:
+from IA_base import base
+
+class security(base):
     script_location = os.path.realpath(__file__)
     
-    def __init__(self, fpath):
+    # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
+    # This must be a leap year
+    zero_point = 1952
+    
+    def __init__(self, fpath, months=None):
         # Extract the file extension
         file_ext = os.path.splitext(fpath)[1]
+        
+        time_intervals = self.generate_intervals(months)
         
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find('iShares') != -1 and file_ext == '.xlsx':
@@ -26,7 +34,8 @@ class security:
             
             self.tick_time = self.__convert_time(np.asarray(excel[2][0][1:]),
                                                  time_form='iShares')
-            self.return_matrix
+            self.return_series = np.asarray(excel[2][5][1:])
+            # self.return_matrix
             
             
         elif fpath.find('iShares') != -1 and file_ext == '.xls': 
@@ -42,10 +51,6 @@ class security:
     def __convert_time(self, time_array, time_form='iShares'):
         # time_array needs to be a numpy array
         # could implement input parser
-        
-        # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
-        # This must be a leap year
-        zero_point = 1952
         
         if time_form == 'iShares':
             
@@ -69,7 +74,7 @@ class security:
                                             
             # Function calculating the number of ticks for a given year, multiple of groups of 4 years
             # (i.e. one loop of the leap-year cycle) plus the remaining non-leap years
-            year_conv = lambda x, y_ind: ((int(x[y_ind:])-zero_point)//4)*1461 \
+            year_conv = lambda x, y_ind: ((int(x[y_ind:])-self.zero_point)//4)*1461 \
                                          + (int(x[y_ind:])%4)*365
                                          
             # Combining the functions above, to add the days, months and years and loop through all entries
@@ -81,3 +86,18 @@ class security:
         else:
             raise ValueError("The provided time_form is not supported: {}\n".format(time_form))
         return tick_time
+    
+    def generate_intervals(self, months=None):
+        
+        #Set a default array with the month intervals to use
+        if months=None:
+            yrs = 5
+            self.months = np.append(np.arange(1,12,1), np.arange(12, yrs*12, 6))
+        else:
+            self.months = months
+        
+        #Return the calculated intervals, using the average month length in a year
+        return self.months*365.25/12
+    
+    def calc_return_matx(self):
+        ts

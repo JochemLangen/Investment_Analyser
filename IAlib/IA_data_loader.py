@@ -5,8 +5,9 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import os
 import sys
+from IA_base import base
 
-class data_loader:
+class data_loader(base):
     script_location = os.path.realpath(__file__)
     
     def __init__(self, folder_location = os.path.realpath(
@@ -44,16 +45,8 @@ class data_loader:
                                      self.script_location + "\n\nCurrently, the only supported files are: \n" + 
                                      "'iShares*.xls'\n'iShares*.xlsx'")
         
-        # Determine the step increment for the process bar:
-        processing_inc = round(100/len(cleaning_files), 2)
-        
-        # Loop through all files and convert them to xlsx:
-        for i, fpath in enumerate(cleaning_files):
-            self.__process_bar(i*processing_inc, fpath)            
-            self.__xml_to_xlsx(fpath)
-            
-        # Done!    
-        self.__process_bar(100, fpath)
+        self.perform_task(cleaning_files, "xml_to_xlsx")
+    
         return
 
 
@@ -63,7 +56,7 @@ class data_loader:
         return
 
 
-    def __xml_to_xlsx(self, fpath):
+    def xml_to_xlsx(self, fpath):
         
         newpath = os.path.realpath(fpath[:fpath.rfind('.')] + '.xlsx')
         
@@ -153,9 +146,9 @@ class data_loader:
         return
         
     
-    def __process_bar(self, inc, fpath):
-        sys.stdout.write('\r')
-        sys.stdout.write("[%-50s] %5.2f%% Current file: %s" % ('='*int(inc//2), inc, fpath))
-        sys.stdout.flush()
-        return
+    # def __process_bar(self, inc, fpath):
+    #     sys.stdout.write('\r')
+    #     sys.stdout.write("[%-50s] %5.2f%% Current file: %s" % ('='*int(inc//2), inc, fpath))
+    #     sys.stdout.flush()
+    #     return
 
