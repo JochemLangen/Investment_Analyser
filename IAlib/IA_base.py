@@ -2,6 +2,7 @@
 
 import os
 import sys
+import numpy as np
 
 
 class base:
@@ -34,8 +35,11 @@ class base:
         sys.stdout.flush()
         return
     
-    # def __str__(self):
-    #     output = str(self.__class__.__name__ + '\n')
-    #     for attr, val in self.__dict__.items():
-    #         output += str(attr + ": " + str(val) +'\n')
-    #     return output
+    def __str__(self):
+        output = str('Class: ' + self.__class__.__name__ + ' \n Attributes: \n')
+        for attr, val in self.__dict__.items():
+            if isinstance(val, list) or isinstance(val, np.ndarray):
+                output += str('  '+ attr + ' \n')
+            else:
+                output += str('  '+ attr + ": " + str(val) +' \n')
+        return output

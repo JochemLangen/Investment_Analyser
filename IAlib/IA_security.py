@@ -1,11 +1,11 @@
-# Description:
 import pandas as pd
 import numpy as np
 import os
+from scipy.interpolate import PchipInterpolator
 
-from IA_base import base
+from IA_stats import *
 
-class security(base):
+class security(stats):
     script_location = os.path.realpath(__file__)
     
     # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
@@ -13,10 +13,20 @@ class security(base):
     zero_point = 1952
     
     def __init__(self, fpath, months=None):
-        # Extract the file extension
-        file_ext = os.path.splitext(fpath)[1]
+        
+        self.__extract_file(fpath)
         
         time_intervals = self.generate_intervals(months)
+        
+        self.return_matrix = self.calc_return_matrix(self.tick_time, \
+                                                     self.return_series, time_intervals)
+        return
+    
+    def __extract_file(self, fpath):
+        
+        ## Extract the data
+        # Extract the file extension
+        file_ext = os.path.splitext(fpath)[1]
         
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find('iShares') != -1 and file_ext == '.xlsx':
@@ -26,16 +36,23 @@ class security(base):
             
             self.name = excel[1][0][0] #Name of the security
             self.inception = excel[1][1][6] #Inception data
-            self.inception_tick = self.__convert_time(np.asarray([self.inception]), 
-                                                      time_form='iShares')
+            self.inception_tick = self.convert_time(np.asarray([self.inception]), 
+                                                      time_form='iShares')[0]
             self.type = excel[1][1][10]
             self.benchmark = excel[1][1][11]
             self.currency = excel[1][1][8]
             
-            self.tick_time = self.__convert_time(np.asarray(excel[2][0][1:]),
+            orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]),
                                                  time_form='iShares')
-            self.return_series = np.asarray(excel[2][5][1:])
-            # self.return_matrix
+            orig_return = excel[2][5][1:]
+            
+            # Remove entries with '--' and reverse order (from start to now)
+            numeric_entries = ~orig_return.str.contains("-", na=False)
+            orig_tick_time = orig_tick_time[numeric_entries][::-1]
+            orig_return = orig_return[numeric_entries][::-1]
+            
+            # Turn array into float
+            orig_return = np.asarray(orig_return, dtype=float)
             
             
         elif fpath.find('iShares') != -1 and file_ext == '.xls': 
@@ -46,18 +63,27 @@ class security(base):
                              fpath + "\n" + "If this file type should be supported, implement it in: \n" +
                              self.script_location + "\n\nCurrently, the only supported files are: \n" + 
                              "'iShares*.xls'\n'iShares*.xlsx'")
+        
+            
+    	## Interpolate data to full dataset 
+        #(interpolation is done so the return can be calculated on all data and sampling
+        # biases are removed)
+        self.tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1)
+        # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
+        self.return_series = PchipInterpolator(orig_tick_time, orig_return)(self.tick_time)
+        
         return
-
-    def __convert_time(self, time_array, time_form='iShares'):
+    
+    def convert_time(self, time_array, time_form='iShares'):
         # time_array needs to be a numpy array
         # could implement input parser
         
         if time_form == 'iShares':
             
-            # Array with conversion of month with corresponding ticks, the first row is
-            # for a normal year, the second for a leap year (Sept is not included)
-            month_ticks = np.array([[31, 59, 90, 120, 151, 181, 212, 243, 304, 334, 365],
-                                   [31, 60, 91, 121, 152, 182, 213, 244, 305, 335, 366]])
+            # Array with conversion of month with corresponding ticks from the previous months, 
+            # the first row is for a normal year, the second for a leap year (Sept is not included)
+            month_ticks = np.array([[0, 31, 59, 90, 120, 151, 181, 212, 273, 304, 334],
+                                   [0, 31, 60, 91, 121, 152, 182, 213, 274, 305, 335]])
             
             # The abbrev. of the months used in the iShares files (Sept not included as it 
             # is inconsistent with the others)
@@ -70,7 +96,7 @@ class security(base):
                                             else month_ticks[1,x[3:6] == month_list]
                                             
             # Function to convert Sept to the tick number for the leap and non-leap years
-            month_conv_sep = lambda x: np.asarray([273]) if int(x[8:])%4 else np.asarray([274])
+            month_conv_sep = lambda x: np.asarray([243]) if int(x[8:])%4 else np.asarray([244])
                                             
             # Function calculating the number of ticks for a given year, multiple of groups of 4 years
             # (i.e. one loop of the leap-year cycle) plus the remaining non-leap years
@@ -83,6 +109,8 @@ class security(base):
                            if date[3:7] == 'Sept' \
                            else year_conv(date, 7) + month_conv(date)) \
                            for date in time_array], dtype=int)[:,0]
+                
+        
         else:
             raise ValueError("The provided time_form is not supported: {}\n".format(time_form))
         return tick_time
@@ -90,14 +118,34 @@ class security(base):
     def generate_intervals(self, months=None):
         
         #Set a default array with the month intervals to use
-        if months=None:
+        if months == None:
             yrs = 5
-            self.months = np.append(np.arange(1,12,1), np.arange(12, yrs*12, 6))
+            self.months = np.append(np.arange(1,12,1, dtype=int), np.arange(12, yrs*12, 6, dtype=int))
         else:
             self.months = months
         
         #Return the calculated intervals, using the average month length in a year
-        return self.months*365.25/12
+        return np.asarray(self.months*365.25/12, dtype=int)
     
-    def calc_return_matx(self):
-        ts
+    def calc_return_matrix(self, t, y, t_int):
+        
+        int_len = len(t_int)
+        t_len = len(t)
+        
+        # Extract indices from the ticks:
+        indices = t - t[0]
+        index_mx = np.tile(indices, (int_len, 1)) #Convert into matrix
+        index_mx += np.tile(t_int, (t_len,1)).T #Add time intervals to matrix
+
+        #Setting too large indices to mask
+        mask = index_mx > t_len-1
+        index_mx[mask] = 0
+        
+        #Creating the y matrix based on the index matrix
+        y_mx = y[index_mx]
+        y_mx[mask] = np.nan
+
+        #Calculate the deltas (the returns)        
+        dy_mx = y_mx - np.tile(y, (int_len, 1))
+        
+        return dy_mx

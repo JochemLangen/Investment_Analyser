@@ -5,7 +5,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import os
 import sys
-from IA_base import base
+from IA_base import *
 
 class data_loader(base):
     script_location = os.path.realpath(__file__)
