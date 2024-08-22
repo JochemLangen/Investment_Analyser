@@ -152,10 +152,11 @@ class security(plotter):
         
         return rel_dy_mx
     
-    def plot_security(self, std_mult=[1,2,3],limit=2):
+    def plot_security(self, std_mult=[1,2,3], limit=2, time_index=-1):
         
         self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, self.months)
         
-        self.future_plot(self.std_array, self.std_err, self.return_matrix*100, self.months, std_mult, limit)
+        self.future_plot(self.std_array, self.std_err, self.return_matrix*100, \
+                         self.months, std_mult, limit, time_index=time_index)
         
         return

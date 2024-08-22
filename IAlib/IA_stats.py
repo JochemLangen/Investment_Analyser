@@ -45,7 +45,7 @@ class stats(base):
         
         return std_array, std_err
     
-    def calc_std_2D(self, y_mx, time, coeff, *args):
+    def calc_std_2D(self, time, y_mx, coeff, *args):
         #First half of args are y_mx, second half are the coefficients
         #Can also be used for the 1D case
         

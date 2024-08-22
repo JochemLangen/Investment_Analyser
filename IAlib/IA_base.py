@@ -3,6 +3,7 @@
 import os
 import sys
 import numpy as np
+import pandas as pd
 
 
 class base:
@@ -38,8 +39,9 @@ class base:
     def __str__(self):
         output = str('Class: ' + self.__class__.__name__ + ' \n Attributes: \n')
         for attr, val in self.__dict__.items():
-            if isinstance(val, list) or isinstance(val, np.ndarray):
-                output += str('  '+ attr + ' \n')
+            if isinstance(val, list) or isinstance(val, np.ndarray) or \
+                isinstance(val, pd.core.frame.DataFrame):
+                output += str('  '+ attr + ': {}\n'.format(type(val)))
             else:
                 output += str('  '+ attr + ": " + str(val) +' \n')
         return output

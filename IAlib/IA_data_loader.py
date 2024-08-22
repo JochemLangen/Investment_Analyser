@@ -12,7 +12,7 @@ class data_loader(base):
     
     def __init__(self, folder_location = os.path.realpath(
             os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                                      '..', 'data'))):
+                                                      '..', 'data', 'security'))):
         self.folder = folder_location # default = <repo. location>\data
         return
     
@@ -144,11 +144,5 @@ class data_loader(base):
         # Delete the old file
         os.remove(fpath)
         return
-        
-    
-    # def __process_bar(self, inc, fpath):
-    #     sys.stdout.write('\r')
-    #     sys.stdout.write("[%-50s] %5.2f%% Current file: %s" % ('='*int(inc//2), inc, fpath))
-    #     sys.stdout.flush()
-    #     return
+
 
