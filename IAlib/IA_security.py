@@ -3,9 +3,9 @@ import numpy as np
 import os
 from scipy.interpolate import PchipInterpolator
 
-from IA_stats import *
+from IA_plotter import *
 
-class security(stats):
+class security(plotter):
     script_location = os.path.realpath(__file__)
     
     # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
@@ -13,6 +13,7 @@ class security(stats):
     zero_point = 1952
     
     def __init__(self, fpath, months=None):
+        super().__init__()
         
         self.__extract_file(fpath)
         
@@ -147,5 +148,14 @@ class security(stats):
 
         #Calculate the deltas (the returns)        
         dy_mx = y_mx - np.tile(y, (int_len, 1))
+        rel_dy_mx = dy_mx/y_mx
         
-        return dy_mx
+        return rel_dy_mx
+    
+    def plot_security(self, std_mult=[1,2,3],limit=2):
+        
+        self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, self.months)
+        
+        self.future_plot(self.std_array, self.std_err, self.return_matrix*100, self.months, std_mult, limit)
+        
+        return
