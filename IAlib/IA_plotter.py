@@ -31,9 +31,9 @@ class plotter(stats):
                              time, std_mult, limit_mult, ylabel='Avg. Annualised Relative Return (%)')
         
         ax3 = fig.add_axes((1.15, -0.525, 1, 1))
-        self.__distr_plot(ax3, return_mat, std_mult, time_index)
+        self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
             
-        fig.show()
+        # fig.show()
         
         return
     
@@ -86,7 +86,7 @@ class plotter(stats):
 
         return
     
-    def __distr_plot(self, ax, y_mat, std_mult, time_index):
+    def __distr_plot(self, ax, y_mat, std_mult, time, time_index):
         
         y_series = np.sort(y_mat[time_index])
         y_series = y_series[~np.isnan(y_series)]
@@ -105,25 +105,63 @@ class plotter(stats):
         bin_lim = np.array([y_mean - abs_max, y_mean + abs_max])
         bin_no = int(2*abs_max / bin_width)
         
-        ax.hist(y_series,bins=bin_no,range=[bin_lim[0],bin_lim[1]],density=True)
+        ax.hist(y_series,bins=bin_no,range=[bin_lim[0],bin_lim[1]],density=True, zorder=30)
+        
+        #Plot probability lines
+        ylimits = ax.get_ylim()
+        std_mult_arr = np.append(np.append(std_mult[::-1], 0), -std_mult)
+        txt_y_pos = ylimits[1]
+        ylim = [ylimits[0], ylimits[1] * 11/10] #To provide space for the text
+        
+        for index, stdi in enumerate(std_mult_arr):
+            x_pos = y_mean + stdi * y_std
+            ax.plot([x_pos, x_pos], ylim, linestyle=':', color='black', zorder=index)
+
+            #Print corresponding percentage
+            nearest_index = np.argmin(abs(y_series - x_pos))
+            if y_series[nearest_index] > x_pos: #Looking at percentage of points included below, 
+            #so if the value is below the nearest index point, it will be one lower
+            #y_len is already +1 compared to the indices so for val < x_pos, nothing is added
+                percentage = np.round((nearest_index+1)/y_len * 100, decimals=1)
+            else:
+                percentage = np.round(nearest_index/y_len * 100, decimals=1)
+                
+            if stdi < 0:
+                plt.text(x_pos+bin_width/2, txt_y_pos,\
+                         "m - {}s\n={}%".format(-stdi, percentage), zorder=32)
+            elif stdi > 0:
+                plt.text(x_pos+bin_width/2, txt_y_pos,\
+                         "m + {}s\n={}%".format(stdi, percentage), zorder=32)
+            else:
+                plt.text(x_pos+bin_width/2, txt_y_pos,\
+                         "mean\n={}%".format(percentage), zorder=32)
         
         #Plot normal distr.
-        return_arr = np.linspace(bin_lim[0], bin_lim[1], 100)
+        xlimits = ax.get_xlim()
+        return_arr = np.linspace(xlimits[0], xlimits[1], 100)
         prob_arr = norm.pdf(return_arr, y_mean, y_std)
         
-        ax.plot(return_arr, prob_arr, linestyle='--', color='black')
-        
-        plt.ylim(bin_lim)
-        plt.ylabel("Normalised probability density",fontsize=self.fontsize)
-        plt.xlabel("Relative return (%)",fontsize=self.fontsize)
+        ax.plot(return_arr, prob_arr, linestyle='--', color='black', zorder=31)
+
+        if y_mean + std_mult[-1] * y_std > bin_lim[1]:
+            plt.xlim([y_mean - std_mult[-1] * y_std - bin_width,\
+                      y_mean + std_mult[-1] * y_std + bin_width])
+        else:
+            plt.xlim(bin_lim)
+            
+        plt.ylim(ylim)
+        plt.ylabel("Normalised Probability Density",fontsize=self.fontsize)
+        plt.xlabel("Cumulative Relative Return (%)",fontsize=self.fontsize)
         ax.yaxis.set_label_position("right")
         
+        ax.tick_params(which='both', left=False, right=True, labelleft=False, labelright=True)
         ax.tick_params(axis='both', which='major', width= self.tickwidth, length= self.ticklength)
         ax.minorticks_on()
         ax.tick_params(axis='both', which='minor', width= self.tickwidth*2/3, length= self.ticklength/2)
-        ax.tick_params(left=False, right=True, labelleft=False, labelright=True)
         plt.xticks(fontsize=self.fontsize)
         plt.yticks(fontsize=self.fontsize)
+        plt.title('Return distribution at {} months'.format(time[time_index]),\
+                  fontsize=self.fontsize)
 
 
         return
