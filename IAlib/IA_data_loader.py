@@ -5,6 +5,8 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
+import requests
 from IA_base import *
 
 class data_loader(base):
@@ -49,6 +51,17 @@ class data_loader(base):
     
         return
 
+    def download_indices(self, url_templates):
+        #Loop through a list of url templates from the dataframe, these are used to generate
+        #All the urls which are threaded, downloaded and then recombined.
+        #It currently only supports MarketWatch data
+        
+        for index, url_temp in enumerate(url_templates):
+            if "marketwatch" not in url_temp:
+                raise ValueError('Currently, only marketwatch index data sets are supported.')
+            
+            
+        
 
     def download_data(self):
         print("Placeholder function! \nA list can be provided with the download locations " +

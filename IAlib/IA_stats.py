@@ -51,9 +51,8 @@ class stats(base):
         
         #Extract the arguments
         nargs = len(args)
-        half_nargs = int(nargs/2)
-        y_matrices = args[0:half_nargs] #Extract the uneven *args -> y_mx
-        coeffs = args[half_nargs:nargs] #Extract the even *args -> coeffs
+        y_matrices = args[0:nargs:2] #Extract the uneven *args -> y_mx
+        coeffs = args[1:nargs:2] #Extract the even *args -> coeffs
 
         y_mat = np.asarray([y_mx, *y_matrices])*100
         

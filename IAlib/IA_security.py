@@ -156,7 +156,8 @@ class security(plotter):
         
         self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, self.months)
         
+        title = 'Return estimation from historic data: {}'.format(self.name)
         self.future_plot(self.std_array, self.std_err, self.return_matrix*100, \
-                         self.months, std_mult, limit, time_index=time_index)
+                         self.months, title, std_mult, limit, time_index=time_index)
         
         return

@@ -13,7 +13,7 @@ class plotter(stats):
         self.ticklength = ticklength
         return
     
-    def future_plot(self, std_array, std_err, return_mat, time, std_mult, \
+    def future_plot(self, std_array, std_err, return_mat, time, title_input, std_mult, \
                     limit_mult, time_index=-1):
         
         std_mult = np.asarray(std_mult)
@@ -22,6 +22,8 @@ class plotter(stats):
         fig = plt.figure()
         
         ax1 = fig.add_axes((0,0,1,1))
+        plt.title(title_input, fontsize=self.fontsize, loc='left')
+                  
         self.__generate_plot(ax1, std_array, std_err, time, std_mult, limit_mult, \
                              ylabel='Cum. Relative Return (%)', xlabel=None)
         
@@ -45,20 +47,25 @@ class plotter(stats):
         colours = (1 - colour_base) * std_mult/max(std_mult)
         colour_max_i = len(colours)-1
         
+        #Calculate errors:
+        err = np.empty((np.shape(std_array)[0], len(std_mult)))
+        for index, stdi in enumerate(std_mult):
+            err[:,index] = np.sqrt(std_err[:,0]**2 + (stdi*std_err[:,1])**2)
+            
         #Positive std lines
         for index, stdi in enumerate(std_mult[::-1]):
             pos_colour = [0, colours[colour_max_i-index], colours[colour_max_i-index]]
-            ax.plot(time, std_array[:,0] + stdi * std_array[:,1], linestyle = '--', \
-                    color = pos_colour, marker='x', label='m + {}s'.format(stdi))
+            ax.errorbar(time, std_array[:,0] + stdi * std_array[:,1], yerr=err[:,-index-1],\
+                        linestyle = '--', color = pos_colour, marker='x', label='m + {}s'.format(stdi))
         #Main line
-        ax.plot(time, std_array[:,0], color='black', marker='x', label = 'mean')
+        ax.errorbar(time, std_array[:,0], yerr=std_err[:,0], color='black', marker='x', label = 'mean')
         
         
         #Negative std lines
         for index, stdi in enumerate(std_mult):
             neg_colour = [colours[index], 0, colours[index]]
-            ax.plot(time, std_array[:,0] - stdi * std_array[:,1], linestyle = '--', \
-                    color=neg_colour, marker='x', label='m - {}s'.format(stdi))
+            ax.errorbar(time, std_array[:,0] - stdi * std_array[:,1], yerr=err[:,index],\
+                        linestyle = '--', color = neg_colour, marker='x', label='m - {}s'.format(stdi))
         
         ax.legend()
         lim_max = max(std_array[:,0] + limit_mult * std_array[:,1])
