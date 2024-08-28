@@ -4,18 +4,25 @@ import os
 from scipy.interpolate import PchipInterpolator
 
 from IA_plotter import *
+from IA_fitter import *
 
-class security(plotter):
+class security(plotter, fitter):
     script_location = os.path.realpath(__file__)
     
     # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
     # This must be a leap year
     zero_point = 1952
     
-    def __init__(self, fpath, months=None):
-        super().__init__()
+    def __init__(self, fpath, index_fpath=None, months=None):
+        plotter.__init__(self)
         
-        self.__extract_file(fpath)
+        self.__extract_security(fpath)
+        
+        if index_fpath != None:
+            self.__extract_index(index_fpath)
+            
+            self.backtrace_data(self.return_series, self.index_return_series, \
+                                self.tick_time, self.index_tick_time)
         
         time_intervals = self.generate_intervals(months)
         
@@ -23,7 +30,7 @@ class security(plotter):
                                                      self.return_series, time_intervals)
         return
     
-    def __extract_file(self, fpath):
+    def __extract_security(self, fpath):
         
         ## Extract the data
         # Extract the file extension
@@ -66,20 +73,59 @@ class security(plotter):
                              "'iShares*.xls'\n'iShares*.xlsx'")
         
             
-    	## Interpolate data to full dataset 
+    	  ## Interpolate data to full dataset 
         #(interpolation is done so the return can be calculated on all data and sampling
         # biases are removed)
-        self.tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1)
+        self.tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1, dtype=int)
         # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
         self.return_series = PchipInterpolator(orig_tick_time, orig_return)(self.tick_time)
+        
+        return
+    
+    def __extract_index(self, fpath):
+        
+        ## Extract the data
+        # Extract the file extension
+        file_ext = os.path.splitext(fpath)[1]
+        
+        # Check the file type (data source -> determines how it should be handled)
+        if fpath.find('yahoo') != -1 and file_ext == '.csv':
+            # Read csv file
+            Excel = pd.read_csv(fpath, header=None)
+            
+            # Extract time
+            datetime_series = pd.to_datetime(Excel[0][1:], format='%d/%m/%Y')
+            timestamps = datetime_series.apply(lambda x: int(x.timestamp()))
+            
+            orig_tick_time = self.convert_time(np.array(timestamps), time_form='Yahoo')
+            
+            # Extract return series
+            orig_return = np.array(Excel[5][1:])
+            
+            # Turn array into float
+            orig_return = np.asarray(orig_return, dtype=float)
+        else:
+            raise ValueError("The following data file has been found but is not supported: \n" + 
+                             fpath + "\n" + "If this file type should be supported, implement it in: \n" +
+                             self.script_location + "\n\nCurrently, the only supported files are: \n" + 
+                             "'*yahoo.csv'")
+            
+        ## Interpolate data to full dataset 
+        #(interpolation is done so the return can be calculated on all data and sampling
+        # biases are removed)
+        self.index_tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1, dtype=int)
+        # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
+        self.index_return_series = PchipInterpolator(orig_tick_time, orig_return)(self.index_tick_time)
         
         return
     
     def convert_time(self, time_array, time_form='iShares'):
         # time_array needs to be a numpy array
         # could implement input parser
+
         
         if time_form == 'iShares':
+            # dd/mm(m)/yyyy
             
             # Array with conversion of month with corresponding ticks from the previous months, 
             # the first row is for a normal year, the second for a leap year (Sept is not included)
@@ -111,7 +157,10 @@ class security(plotter):
                            else year_conv(date, 7) + month_conv(date)) \
                            for date in time_array], dtype=int)[:,0]
                 
-        
+        elif time_form == 'Yahoo':
+            #Turn the datetime ticks into date ticks and add the offset to be consistent with iShares format
+            tick_time = np.ceil(time_array/86400) + self.convert_time(np.array(['01/Jan/1970']),\
+                                                                  time_form = 'iShares')
         else:
             raise ValueError("The provided time_form is not supported: {}\n".format(time_form))
         return tick_time

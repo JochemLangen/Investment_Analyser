@@ -5,8 +5,11 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import re
+import datetime
+import concurrent.futures
 import requests
+from http.client import responses
 from IA_base import *
 
 class data_loader(base):
@@ -16,9 +19,11 @@ class data_loader(base):
             os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                                       '..', 'data', 'security'))):
         self.folder = folder_location # default = <repo. location>\data
+        self.download_status = 0
         return
     
-    
+    ## Cleaning files:
+        
     def clean_files(self):
         print("Cleaning up data files in: \n" + self.folder + "\n")
         
@@ -50,25 +55,7 @@ class data_loader(base):
         self.perform_task(cleaning_files, "xml_to_xlsx")
     
         return
-
-    def download_indices(self, url_templates):
-        #Loop through a list of url templates from the dataframe, these are used to generate
-        #All the urls which are threaded, downloaded and then recombined.
-        #It currently only supports MarketWatch data
-        
-        for index, url_temp in enumerate(url_templates):
-            if "marketwatch" not in url_temp:
-                raise ValueError('Currently, only marketwatch index data sets are supported.')
-            
-            
-        
-
-    def download_data(self):
-        print("Placeholder function! \nA list can be provided with the download locations " +
-              "of all data files, these can then be moved to the right location and cleaned up.")
-        return
-
-
+    
     def xml_to_xlsx(self, fpath):
         
         newpath = os.path.realpath(fpath[:fpath.rfind('.')] + '.xlsx')
@@ -82,8 +69,8 @@ class data_loader(base):
                 # Check if the file can be read out properly as xml file
                 if len(soup.findAll('Worksheet')) == 0:
                     
-                    #Read as html instead
-                    soup = BeautifulSoup(file_contents)
+                    #Read with lxml instead
+                    soup = BeautifulSoup(file_contents, 'lxml')
                     
                     # Find out the formatting used to determine sheets, rows and cells
                     flag_format_sheet = ['Worksheet', 'ss:worksheet', 'worksheet', 'ss:Worksheet']
@@ -159,3 +146,80 @@ class data_loader(base):
         return
 
 
+
+
+    ## Downloading files:
+        
+    def download_indices(self, url_templates, filenames):
+        #Loop through a list of url templates from the dataframe, these are used to generate
+        #All the urls which are threaded, downloaded and then recombined.
+        #It currently only supports Yahoo Finance data
+        url_templates = np.array(url_templates)
+        
+        current_time = datetime.datetime.now()
+        timestamp = str(int(np.floor(current_time.timestamp())))
+        urls = np.empty_like(url_templates)
+
+        for index, url_temp in enumerate(url_templates):
+            if "finance.yahoo" in url_temp:
+                #Yahoo dates start counting from 02/01/1970 with tickers being year + day + hour + min + sec
+                urls[index] = re.sub('period2=.+(?=&)', 'period2='+timestamp, url_temp)
+                urls[index] = re.sub('period1=-.+(?=&period2)', 'period1=7200', urls[index]) #Set lowest start time to 1971-01-02 (i.e. 0 ticker)
+            
+                filenames[index] = filenames[index] + '-yahoo.csv'
+            else:
+                raise ValueError('Currently, only Yahoo Finance index data sets are supported.')
+            
+        self.perform_download(urls, filenames, 'Index files')
+        
+        return
+    
+    
+    def perform_download(self, urls, filenames, title):
+        print('\nDownloading: ' + title)
+        nelem = len(urls)
+        
+        if nelem != 0:
+            # Determine the step increment for the process bar:
+            self.processing_inc = round(100/nelem, 2)
+            
+            # Create every download as a thread and pool all to be downloaded simultaneously
+            # with ThreadPoolExecutor() as executor:
+            #     executor.map(data_loader.download_file, urls, filenames)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                result_futures  = list(map(lambda x, y: executor.submit(self.download_file, x, y), \
+                                   urls, filenames))
+                    
+                #Check if there's an error and throw
+                for future in concurrent.futures.as_completed(result_futures):
+                    if future.result() != None:
+                        raise ConnectionError(future.result())
+
+        # Done!    
+        self.process_bar(100, 'Finished downloading all files')
+        print('\n')
+        
+        # Reset download status and remove processing_inc
+        delattr(self, 'processing_inc')
+        self.download_status = 0
+        return
+    
+    
+    def download_file(self, url, filename):
+        response = requests.get(url, headers = {'User-agent': 'InkJDog'})
+        
+        # Check the error code
+        try:
+            response.raise_for_status()
+        except:
+              return 'Request failed with error: ' + str(response.status_code) + ' - '\
+                 + responses[response.status_code] +'\n'\
+                       'For file: ' + filename + '\nWith url: ' + url
+        
+        with open(filename, mode="wb") as file:
+            file.write(response.content)
+            
+        self.download_status += 1
+        self.process_bar(self.download_status*self.processing_inc, filename)            
+            
+        return

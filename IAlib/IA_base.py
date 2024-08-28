@@ -13,7 +13,7 @@ class base:
         return
     
     def perform_task(self, elements, task, *args, **kwargs):
-        print('\nProcessing task: ', task)
+        print('Processing task: ', task)
         nelem = len(elements)
         if nelem != 0:
             # Determine the step increment for the process bar:
@@ -23,15 +23,15 @@ class base:
             
             # Loop through all files and convert them to xlsx:
             for i, item in enumerate(elements):
-                self.__process_bar(i*processing_inc, item)            
+                self.process_bar(i*processing_inc, item)            
                 func(item, *args, **kwargs)
             
         # Done!    
-        self.__process_bar(100, item)
+        self.process_bar(100, item)
         print('\n')
         return
     
-    def __process_bar(self, inc, element):
+    def process_bar(self, inc, element):
         sys.stdout.write('\r')
         sys.stdout.write("[%-50s] %5.2f%% Current element: %s            " % ('='*int(inc//2), inc, element))
         sys.stdout.flush()
