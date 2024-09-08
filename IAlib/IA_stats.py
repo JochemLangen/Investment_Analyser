@@ -149,12 +149,14 @@ class stats(base):
         return std_array, std_err, y_series_mat
     
     def __annualise(self, time, y_mx, *args):
-        #Extract matrices:
+        #Extract matrices expressed in percentages:
         y_matrices = np.array([y_mx, *args]) 
         
         #Expand time array into matrix format
         time_mat = np.expand_dims(time, axis=1)
+
         #Convert y_mx into fractional data, get annualised return and convert back to % gain
+        #using the absolute and sign are there in case of debt
         annualised_y_mat = ((1 + y_matrices/100)**[12/time_mat] - 1)*100
         
         return annualised_y_mat

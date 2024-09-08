@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import pandas as pd
+import pickle
 
 from IA_data_loader import *
 from IA_security import *
@@ -12,7 +13,8 @@ class portfolio(plotter, data_loader, fitter):
     
     def __init__(self, data_location = os.path.realpath(\
             os.path.join(os.path.dirname(os.path.realpath(__file__)),\
-                                                      '..', 'data', 'data.xlsx'))):
+                         '..', 'data', 'data.xlsx')), months = [], start_date=None, load=False):
+        
         plotter.__init__(self)
         data_loader.__init__(self)
         
@@ -20,9 +22,15 @@ class portfolio(plotter, data_loader, fitter):
         
         #Load all the securities from the data folder into a dictionary
         self.securities = {}        
-        self.perform_task(self.dataframe['Name'], 'load_security')
-        self.dataframe['Name'] = list(self.securities.keys())
-        self.save_dataframe()
+        self.perform_task(self.dataframe['Name'], 'load_security', load)
+        
+        if load == False: #Otherwise the files are reloaded i.e. had been processed before so these names should already be good
+            self.dataframe['Name'] = list(self.securities.keys())
+            self.save_dataframe()
+        
+        #Calculate the return matrices per security:
+        self.perform_task(self.dataframe['Name'], 'calc_return_matrix_per_security', \
+                          months=months, start_date=start_date)
         
         self.months = self.securities[self.dataframe['Name'][0]].months
         
@@ -113,16 +121,38 @@ class portfolio(plotter, data_loader, fitter):
     
     
     ## Secondary functions:
-    def load_security(self, security_name):
+    def load_security(self, security_name, load=False):
+        
         index = self.dataframe['Name'][self.dataframe['Name'] == security_name].index[0]
         
-        filepath = os.path.join(self.folder, self.dataframe['Security_loc'][index])
-        
-        sec = security(filepath)
-        
-        self.securities[sec.name] = sec
+        if load == False:
+            
+            sec_filepath = os.path.join(self.folder, self.dataframe['Security_loc'][index])
+            index_filepath = os.path.join(self.folder, '..', 'index', self.dataframe['Index_loc'][index])
+            
+            sec = security(sec_filepath, index_filepath, calc_mat=False)
+            
+            #Create the entry in the dataframe based on the security name directly, rather than its name
+            #in the Excel data sheet
+            self.securities[sec.name] = sec
+            
+        else: 
+            #Generate pickle file filename. Generated in the same way as when it is saved.
+            #This only works if the names in the data.xlsx file correspond with the pickle file names
+            pickle_path = os.path.join(self.folder, '..', 'pickles', \
+                                  security_name.replace(' ', '_')+'.pkl')
+                
+            #Loading the pickle file. Note, as it had been created before the data.xlsx name should be correct
+            with open(pickle_path, 'rb') as file:
+                self.securities[security_name] = pickle.load(file)
+
+        return
+    
+    def calc_return_matrix_per_security(self, name, **kwargs):
+        self.securities[name].return_matrix = self.securities[name].calc_return_matrix(**kwargs)
         return
     
     def plot_indiv_security(self, name, **kwargs):
         self.securities[name].plot_security(**kwargs)
         return
+    

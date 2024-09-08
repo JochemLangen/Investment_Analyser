@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import norm
+# from scipy.stats import norm
+import scipy.stats
 
 from IA_stats import *
 
@@ -28,9 +29,11 @@ class plotter(stats):
                              ylabel='Cum. Relative Return (%)', xlabel=None)
         
         #Annual return
-        ax2 = fig.add_axes((0,-1.05,1,1))
+        ax2 = fig.add_axes((0,-1.15,1,1))
         self.__generate_plot(ax2, std_array[:,2:], std_err[:,2:], \
                              time, std_mult, limit_mult, ylabel='Avg. Annualised Relative Return (%)')
+        plt.title('Avg. Annualised Relative Return at {} months: {}%'.format(\
+                     time[time_index], round(std_array[time_index, 2],2)), fontsize=self.fontsize)
         
         ax3 = fig.add_axes((1.15, -0.525, 1, 1))
         self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
@@ -146,13 +149,13 @@ class plotter(stats):
         #Plot normal distr.
         xlimits = ax.get_xlim()
         return_arr = np.linspace(xlimits[0], xlimits[1], 100)
-        prob_arr = norm.pdf(return_arr, y_mean, y_std)
+        prob_arr = scipy.stats.truncnorm.pdf(return_arr, (-100 - y_mean)/y_std, np.inf, loc=y_mean, scale=y_std)
         
         ax.plot(return_arr, prob_arr, linestyle='--', color='black', zorder=31)
 
-        if y_mean + std_mult[-1] * y_std > bin_lim[1]:
+        if y_mean + (std_mult[-1]+1) * y_std > bin_lim[1]:
             plt.xlim([y_mean - std_mult[-1] * y_std - bin_width,\
-                      y_mean + std_mult[-1] * y_std + bin_width])
+                      y_mean + (std_mult[-1]+1) * y_std]) #Extra space because of text
         else:
             plt.xlim(bin_lim)
             
@@ -176,5 +179,61 @@ class plotter(stats):
     def full_plot(self):
         #Will also include historic data of the portfolio
         return
+    
+    
+    def plot_backtracing(self, ):
+        ## Plotting        
+        offset = 0
+        range_lim = [offset+14500,offset+16000]
+        
+        fig = plt.figure()
+        # plt.plot(t_old, y_old, label='index')
+        plt.plot(new_t[range_lim[0]:range_lim[1]], fitted_y[range_lim[0]:range_lim[1]], label='fitted')
+        # plt.plot(t_old, fitted_y, label='fitted')
+
+        plt.plot(t[offset:offset+1300], y[offset:offset+1300], label='orig')
+        plt.plot(new_t[range_lim[0]:range_lim[1]], smooth_y[range_lim[0]:range_lim[1]], label='final data')
+        plt.legend()
+        plt.show()
+        
+        fig = plt.figure()
+        # plt.plot(t_old, y_old, label='index')
+        plt.plot(t_old[:-1][-y_len:], fitted_y[-y_len:], label='fitted')
+        # plt.plot(t_old, fitted_y, label='fitted')
+
+        plt.plot(t, y, label='orig')
+        plt.yscale('log')
+        plt.legend()
+        plt.show()
+        
+        
+        plt.figure()
+        plt.plot(t_old[1:], (fitted_y / y_n_factor) / (y_old[1:] / y_old_n_factor))
+        plt.show()
+        
+        plt.figure()
+        plt.plot(t_old[1:], fitted_y)
+        plt.plot(t_old[1:], y_old[1:] / y_old_n_factor * y_n_factor)
+        plt.plot(t, y, label='orig')
+        plt.yscale('log')
+        plt.show()
+        
+        
+        
+        plt.figure()
+        plt.scatter(y_old_norm[1:], fitted_y[-y_len:]/y_n_factor, marker='.')
+        plt.scatter(y_old_norm[1:], y_norm, marker='.')
+        plt.ylabel('Y norm')
+        plt.xlabel('Y index norm')
+        plt.show()
+        
+        
+        plt.figure()
+        plt.plot(t, y_resid/y)
+        plt.ylim([-0.1,0.1])
+        plt.show()
+        
+        return
+        
     
     

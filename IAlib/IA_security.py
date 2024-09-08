@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import os
 from scipy.interpolate import PchipInterpolator
+import datetime
+import pickle
 
 from IA_plotter import *
 from IA_fitter import *
@@ -13,22 +15,30 @@ class security(plotter, fitter):
     # This must be a leap year
     zero_point = 1952
     
-    def __init__(self, fpath, index_fpath=None, months=None):
+    def __init__(self, fpath, index_fpath=None, months=[], start_date=None, calc_ortho=True, calc_mat=True):
+        #
+        # start_date: format is dd/mm/yyyy. Minimum is 02/01/1970
         plotter.__init__(self)
-        
+            
         self.__extract_security(fpath)
         
         if index_fpath != None:
             self.__extract_index(index_fpath)
             
-            self.backtrace_data(self.return_series, self.index_return_series, \
-                                self.tick_time, self.index_tick_time)
+            self.security_tick_time = self.tick_time.copy()
+            self.security_return_series = self.return_series.copy()
+            
+            self.return_series, self.tick_time, self.backtracing = \
+                self.backtrace_data(self.return_series, self.index_return_series, \
+                                self.tick_time, self.index_tick_time, calc_ortho=calc_ortho)
+                    
+        self.save_security()
+
+        if calc_mat == True:
+            self.return_matrix = self.calc_return_matrix(months, start_date)
         
-        time_intervals = self.generate_intervals(months)
-        
-        self.return_matrix = self.calc_return_matrix(self.tick_time, \
-                                                     self.return_series, time_intervals)
         return
+
     
     def __extract_security(self, fpath):
         
@@ -52,7 +62,7 @@ class security(plotter, fitter):
             
             orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]),
                                                  time_form='iShares')
-            orig_return = excel[2][5][1:]
+            orig_return = excel[2][2][1:]
             
             # Remove entries with '--' and reverse order (from start to now)
             numeric_entries = ~orig_return.str.contains("-", na=False)
@@ -95,7 +105,8 @@ class security(plotter, fitter):
             
             # Extract time
             datetime_series = pd.to_datetime(Excel[0][1:], format='%d/%m/%Y')
-            timestamps = datetime_series.apply(lambda x: int(x.timestamp()))
+
+            timestamps = datetime_series.apply(lambda x: x.timestamp())
             
             orig_tick_time = self.convert_time(np.array(timestamps), time_form='Yahoo')
             
@@ -159,54 +170,95 @@ class security(plotter, fitter):
                 
         elif time_form == 'Yahoo':
             #Turn the datetime ticks into date ticks and add the offset to be consistent with iShares format
-            tick_time = np.ceil(time_array/86400) + self.convert_time(np.array(['01/Jan/1970']),\
-                                                                  time_form = 'iShares')
+            datetime_ticks = np.empty_like(time_array, dtype=int)
+
+            np.floor(time_array/86400, out=datetime_ticks, casting='unsafe')
+
+            tick_time = datetime_ticks + self.convert_time(np.array(['01/Jan/1970']), time_form = 'iShares')
         else:
             raise ValueError("The provided time_form is not supported: {}\n".format(time_form))
         return tick_time
     
-    def generate_intervals(self, months=None):
+    def generate_intervals(self, months=[]):
         
         #Set a default array with the month intervals to use
-        if months == None:
-            yrs = 5
-            self.months = np.append(np.arange(1,12,1, dtype=int), np.arange(12, yrs*12, 6, dtype=int))
+        if np.shape(months)[0] == 0:
+            yrs = 10
+            self.months = np.append(np.arange(1,12,2, dtype=int), np.arange(12, yrs*12, 8, dtype=int))
         else:
             self.months = months
         
         #Return the calculated intervals, using the average month length in a year
         return np.asarray(self.months*365.25/12, dtype=int)
     
-    def calc_return_matrix(self, t, y, t_int):
+    def calc_return_matrix(self, months, start_date=None):
+        
+        t_int = self.generate_intervals(months)
+        
+        #Set the data start date:
+        if start_date == None:
+            self.start_tick = self.tick_time[0]
+        else:
+            #Convert string format start_date to tick with the zero_point
+            tick_form_delta = self.convert_time(np.array(['01/Jan/1970']), time_form = 'iShares')
+            self.start_tick = int(np.floor((datetime.datetime.strptime(start_date + ' 01', '%d/%m/%Y %H').timestamp())/86400) + tick_form_delta) 
+                #Note, the hour needed to be added because of the timestamp datetime generates for a simple date
+            
+            #Slice the arrays to use the start_index
+            start_index = np.argmin(abs(self.tick_time - self.start_tick))
+            self.tick_time = self.tick_time[start_index:]
+            self.return_series = self.return_series[start_index:]
+        
         
         int_len = len(t_int)
-        t_len = len(t)
+        t_len = len(self.tick_time)
         
         # Extract indices from the ticks:
-        indices = t - t[0]
+        indices = self.tick_time - self.tick_time[0] #As all points are a full set of integers from the start date to now
         index_mx = np.tile(indices, (int_len, 1)) #Convert into matrix
         index_mx += np.tile(t_int, (t_len,1)).T #Add time intervals to matrix
-
-        #Setting too large indices to mask
+        
+        #Setting too large indices to mask (at the end of the return series, you can't
+        #calculate the delta anymore i.e. 1 month return 0.5 months before the end of the series).
+        #The indices for these non-calculable points are set to zero for now and then set to nan after
         mask = index_mx > t_len-1
         index_mx[mask] = 0
         
         #Creating the y matrix based on the index matrix
-        y_mx = y[index_mx]
+        y_mx = self.return_series[index_mx]
         y_mx[mask] = np.nan
 
-        #Calculate the deltas (the returns)        
-        dy_mx = y_mx - np.tile(y, (int_len, 1))
-        rel_dy_mx = dy_mx/y_mx
+        #Calculate the deltas (the returns)   
+        y_mat = np.tile(self.return_series, (int_len, 1))
+        dy_mx = y_mx - y_mat
+        rel_dy_mx = dy_mx/y_mat
+        
         
         return rel_dy_mx
     
     def plot_security(self, std_mult=[1,2,3], limit=2, time_index=-1):
         
+        #Calculate statistics
         self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, self.months)
         
-        title = 'Return estimation from historic data: {}'.format(self.name)
+        #Convert starting tick to string:
+        tick_form_delta = int(self.convert_time(np.array(['01/Jan/1970']), time_form = 'iShares'))
+        start_date = datetime.datetime.fromtimestamp((self.start_tick-tick_form_delta)*86400).date()
+        
+        #Generate plots
+        title = 'Return estimation from historic data ({}+): {}'.format(start_date, self.name)
         self.future_plot(self.std_array, self.std_err, self.return_matrix*100, \
                          self.months, title, std_mult, limit, time_index=time_index)
         
         return
+    
+    def save_security(self, saving_loc = os.path.realpath(\
+            os.path.join(script_location,'..', '..', 'data', 'pickles'))):
+        
+        file_loc = os.path.join(saving_loc, self.name.replace(' ', '_')+'.pkl')
+        
+        with open(file_loc, 'wb') as file:
+            pickle.dump(self, file, pickle.HIGHEST_PROTOCOL)
+            
+        return
+            
