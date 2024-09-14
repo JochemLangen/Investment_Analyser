@@ -101,17 +101,29 @@ class security(plotter, fitter):
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find('yahoo') != -1 and file_ext == '.csv':
             # Read csv file
-            Excel = pd.read_csv(fpath, header=None)
-            
-            # Extract time
-            datetime_series = pd.to_datetime(Excel[0][1:], format='%d/%m/%Y')
+            Excel = pd.read_csv(fpath)
 
-            timestamps = datetime_series.apply(lambda x: x.timestamp())
+            if 'Date' in Excel.columns: #Old format, with download API:
+                
+                # Extract time
+                datetime_series = pd.to_datetime(Excel['Date'][1:], format='%d/%m/%Y')
+                
+                timestamps = datetime_series.apply(lambda x: x.timestamp())
+                
+                # Extract return series
+                orig_return = np.array(Excel['Adj Close'][1:])
+                
+            elif 'Timestamp' in Excel.columns: #New format from json data in chart
+                timestamps = Excel['Timestamp'][1:]
+                
+                orig_return = np.array(Excel['Adj Close'][1:])
+            else:
+                raise ValueError("The following Yahoo data file has an unsupported format: \n" + 
+                                 fpath + "\n" + "If this file type should be supported, implement it in: \n" +
+                                 self.script_location)
             
+            #Convert time to iShares format
             orig_tick_time = self.convert_time(np.array(timestamps), time_form='Yahoo')
-            
-            # Extract return series
-            orig_return = np.array(Excel[5][1:])
             
             # Turn array into float
             orig_return = np.asarray(orig_return, dtype=float)

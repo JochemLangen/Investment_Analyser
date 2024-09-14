@@ -25,7 +25,8 @@ class base:
             for i, item in enumerate(elements):
                 self.process_bar(i*processing_inc, item)            
                 func(item, *args, **kwargs)
-            
+        else:
+            item = 'Nothing to be done'
         # Done!    
         self.process_bar(100, item)
         print('\n')

@@ -9,6 +9,7 @@ import re
 import datetime
 import concurrent.futures
 import requests
+import json
 from http.client import responses
 from IA_base import *
 
@@ -163,10 +164,9 @@ class data_loader(base):
         for index, url_temp in enumerate(url_templates):
             if "finance.yahoo" in url_temp:
                 #Yahoo dates start counting from 02/01/1970 with tickers being year + day + hour + min + sec
-                urls[index] = re.sub('period2=.+(?=&)', 'period2='+timestamp, url_temp)
+                urls[index] = re.sub('period2=.+(?=&interval)', 'period2='+timestamp, url_temp)
                 urls[index] = re.sub('period1=-.+(?=&period2)', 'period1=7200', urls[index]) #Set lowest start time to 1971-01-02 (i.e. 0 ticker)
-            
-                filenames[index] = filenames[index] + '-yahoo.csv'
+
             else:
                 raise ValueError('Currently, only Yahoo Finance index data sets are supported.')
             
@@ -194,9 +194,11 @@ class data_loader(base):
                 for future in concurrent.futures.as_completed(result_futures):
                     if future.result() != None:
                         raise ConnectionError(future.result())
+        else:
+            item = 'Nothing to download'
 
         # Done!    
-        self.process_bar(100, 'Finished downloading all files')
+        self.process_bar(100, item)
         print('\n')
         
         # Reset download status and remove processing_inc
@@ -216,10 +218,26 @@ class data_loader(base):
                  + responses[response.status_code] +'\n'\
                        'For file: ' + filename + '\nWith url: ' + url
         
-        with open(filename, mode="wb") as file:
-            file.write(response.content)
+        if 'finance.yahoo' in url: #Yahoo json file
+            self.json_to_csv(response.content, filename)
+        
+        else:
+            with open(filename, mode="wb") as file:
+                file.write(response.content)
             
         self.download_status += 1
         self.process_bar(self.download_status*self.processing_inc, filename)            
             
+        return
+    
+    def json_to_csv(self, content, filename):
+        #Load yahoo html chart data as json file, extract data and save as csv
+        
+        js = json.loads(content)
+        
+        df = pd.DataFrame(data = {'Timestamp': js['chart']['result'][0]['timestamp'],\
+                                  'Adj Close': js['chart']['result'][0]['indicators']['adjclose'][0]['adjclose']}\
+                          , dtype=float)
+        
+        df.to_csv(filename, index=False)
         return

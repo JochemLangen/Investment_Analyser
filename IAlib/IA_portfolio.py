@@ -2,7 +2,8 @@ import numpy as np
 import os
 import pandas as pd
 import pickle
-
+import pyautogui
+import re
 from IA_data_loader import *
 from IA_security import *
 from IA_plotter import *
@@ -20,9 +21,21 @@ class portfolio(plotter, data_loader, fitter):
         
         self.dataframe = pd.read_excel(data_location)
         
+        #Check whether all the data has been fetched:
+        if self.dataframe['Index_loc'].isnull().values.any() or \
+            self.dataframe['Security_loc'].isnull().values.any():
+            answer = pyautogui.confirm(text='Not all securities have their file locations defined.\n'\
+                              +'Would you like to fetch all data? This may take some time.\n'+
+                              'If not, an attempt will be made to use the available data.',\
+                                  title='Missing Index or Security data',\
+                                      buttons=['Yes', 'No'])
+            if answer == 'Yes':
+                self.fetch_data()
+        
+        
         #Load all the securities from the data folder into a dictionary
         self.securities = {}        
-        self.perform_task(self.dataframe['Name'], 'load_security', load)
+        self.perform_task(self.dataframe['Name'], 'load_securities', load)
         
         if load == False: #Otherwise the files are reloaded i.e. had been processed before so these names should already be good
             self.dataframe['Name'] = list(self.securities.keys())
@@ -63,7 +76,7 @@ class portfolio(plotter, data_loader, fitter):
     
     def plot_securities(self, std_mult=[1,2,3], limit=2, time_index=-1):
         #Plot each individual security in the portfolio
-        self.perform_task(list(self.securities.keys()), 'plot_indiv_security', \
+        self.perform_task(list(self.securities.keys()), 'plot_individual_securities', \
                           std_mult=std_mult, limit=limit, time_index=time_index)            
         return
         
@@ -79,15 +92,32 @@ class portfolio(plotter, data_loader, fitter):
         index_paths = np.empty_like(self.dataframe['Name'])
         index_filename = np.empty_like(index_paths)
         security_paths = np.empty_like(index_paths)
+        security_filename = np.empty_like(index_paths)
         
         for index, filename in enumerate(self.dataframe['Name']):
-            index_filename[index] = filename.replace(' ', '_')
+            #Generating / extracting the index file name and path
+            if isinstance(self.dataframe['Index_loc'][index], str):
+                index_filename[index] = self.dataframe['Index_loc'][index]
+            else:
+                index_filename[index]= filename.replace(' ', '_') + '-yahoo.csv'
+                
             index_paths[index] = os.path.realpath(os.path.join(self.folder, '..', 'index', index_filename[index]))
             
-            #Converting the security file format to .xls (pre-cleaning state)
-            security_filename = self.dataframe['Security_loc'][index]
-            security_filename = security_filename[0:security_filename.rfind('.')] + '.xls'
-            security_paths[index] = os.path.join(self.folder, security_filename)
+            #Generating / extracting the index file name and path
+            if isinstance(self.dataframe['Security_loc'][index], str):
+                sec_file = os.path.splitext(self.dataframe['Security_loc'][index])[0]
+            else:
+                sec_file = re.search('fileName.+(?=&)', self.dataframe['Security_down'][index]).group(0)[9:]
+            
+            security_filename[index] = sec_file + '.' +\
+                re.search('fileType.+(?=&f)', self.dataframe['Security_down'][index]).group(0)[9:]
+           
+
+            security_paths[index] = os.path.join(self.folder, security_filename[index])
+            
+            #Changing the ext. to save the security files correctly after having been cleaned
+            security_filename[index] = security_filename[index][:security_filename[index].rfind('.')] + '.xlsx'
+
         
         if which == 'indices' or which == 'both':
             #Download the index files     
@@ -104,6 +134,10 @@ class portfolio(plotter, data_loader, fitter):
             
             #Clean the iShares files
             self.clean_files()
+            
+            #Add the new security filenames to the dataframe and save
+            self.dataframe['Security_loc'] = security_filename
+            self.save_dataframe()
         
         return
       
@@ -121,17 +155,19 @@ class portfolio(plotter, data_loader, fitter):
     
     
     ## Secondary functions:
-    def load_security(self, security_name, load=False):
+    def load_securities(self, security_name, load=False):
         
         index = self.dataframe['Name'][self.dataframe['Name'] == security_name].index[0]
         
         if load == False:
-            
             sec_filepath = os.path.join(self.folder, self.dataframe['Security_loc'][index])
-            index_filepath = os.path.join(self.folder, '..', 'index', self.dataframe['Index_loc'][index])
             
-            sec = security(sec_filepath, index_filepath, calc_mat=False)
-            
+            if isinstance(self.dataframe['Index_loc'][index], str):
+                index_filepath = os.path.join(self.folder, '..', 'index', self.dataframe['Index_loc'][index])
+                sec = security(sec_filepath, index_filepath, calc_mat=False)
+            else:
+                sec = security(sec_filepath, calc_mat=False)
+                
             #Create the entry in the dataframe based on the security name directly, rather than its name
             #in the Excel data sheet
             self.securities[sec.name] = sec
@@ -152,7 +188,7 @@ class portfolio(plotter, data_loader, fitter):
         self.securities[name].return_matrix = self.securities[name].calc_return_matrix(**kwargs)
         return
     
-    def plot_indiv_security(self, name, **kwargs):
+    def plot_individual_securities(self, name, **kwargs):
         self.securities[name].plot_security(**kwargs)
         return
     
