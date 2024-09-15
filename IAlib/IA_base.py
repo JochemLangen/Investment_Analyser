@@ -34,7 +34,8 @@ class base:
     
     def process_bar(self, inc, element):
         sys.stdout.write('\r')
-        sys.stdout.write("[%-50s] %5.2f%% Current element: %s            " % ('='*int(inc//2), inc, element))
+        sys.stdout.write("[%-50s] %5.2f%% Current element: %s                                   "\
+                         % ('='*int(inc//2), inc, element))
         sys.stdout.flush()
         return
     

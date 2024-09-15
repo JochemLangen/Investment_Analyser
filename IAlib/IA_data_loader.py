@@ -11,6 +11,11 @@ import concurrent.futures
 import requests
 import json
 from http.client import responses
+from selenium import webdriver 
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 from IA_base import *
 
 class data_loader(base):
@@ -21,6 +26,7 @@ class data_loader(base):
                                                       '..', 'data', 'security'))):
         self.folder = folder_location # default = <repo. location>\data
         self.download_status = 0
+        self.download_folder = "D:\Jochem\Downloads"
         return
     
     ## Cleaning files:
@@ -160,12 +166,16 @@ class data_loader(base):
         current_time = datetime.datetime.now()
         timestamp = str(int(np.floor(current_time.timestamp())))
         urls = np.empty_like(url_templates)
-
+        
         for index, url_temp in enumerate(url_templates):
             if "finance.yahoo" in url_temp:
+                #Change date to current month
                 #Yahoo dates start counting from 02/01/1970 with tickers being year + day + hour + min + sec
                 urls[index] = re.sub('period2=.+(?=&interval)', 'period2='+timestamp, url_temp)
-                urls[index] = re.sub('period1=-.+(?=&period2)', 'period1=7200', urls[index]) #Set lowest start time to 1971-01-02 (i.e. 0 ticker)
+                
+                #Limit data to 01-01-19700
+                if int(re.search('period1=.+(?=&period2)', urls[index]).group(0)[8:]) < 7200:
+                    urls[index] = re.sub('period1=-.+(?=&period2)', 'period1=7200', urls[index]) #Set lowest start time to 1971-01-02 (i.e. 0 ticker)
 
             else:
                 raise ValueError('Currently, only Yahoo Finance index data sets are supported.')
@@ -173,6 +183,34 @@ class data_loader(base):
         self.perform_download(urls, filenames, 'Index files')
         
         return
+    
+    def download_fx(self, url_templates, filenames):
+        #Loop through a list of url templates from the dataframe, these are used to generate
+        #All the urls which are threaded, downloaded and then recombined.
+        #It currently only supports fxtop and ECB
+        url_templates = np.array(url_templates)
+        
+        current_time = datetime.datetime.now()
+        month = str(current_time.month).zfill(2) #Get the month and add zero if needed
+        year = str(current.time.year)
+        urls = np.empty_like(url_templates)
+        
+        #Don't redownload ecb data
+        url_templates = url_templates[['ecb.europa.eu' not in x for x in url_templates]]
+
+        for index, url_temp in enumerate(url_templates):
+            if "fxtop" in url_temp:
+                #Change date to current month
+                urls[index] = re.sub('MM2=.+(?=&Y)', 'MM2='+month, url_temp)
+                urls[index] = re.sub('YYYY2=-.+(?=&b)', 'YYYY2='+year, urls[index])
+
+            else:
+                raise ValueError('Currently, only FXTOP fx data sets are supported.')
+            
+        self.perform_download(urls, filenames, 'FX files')
+        
+        return
+        
     
     
     def perform_download(self, urls, filenames, title):
@@ -208,29 +246,37 @@ class data_loader(base):
     
     
     def download_file(self, url, filename):
-        response = requests.get(url, headers = {'User-agent': 'InkJDog'})
         
-        # Check the error code
-        try:
-            response.raise_for_status()
-        except:
-              return 'Request failed with error: ' + str(response.status_code) + ' - '\
-                 + responses[response.status_code] +'\n'\
-                       'For file: ' + filename + '\nWith url: ' + url
-        
-        if 'finance.yahoo' in url: #Yahoo json file
-            self.json_to_csv(response.content, filename)
-        
+        if 'msci.com' in url:
+            self.driver_download(url, filename)
         else:
-            with open(filename, mode="wb") as file:
-                file.write(response.content)
+        
+            response = requests.get(url, headers = {'User-agent': 'InkJDog'})
+            
+            # Check the error code
+            try:
+                response.raise_for_status()
+            except:
+                  return 'Request failed with error: ' + str(response.status_code) + ' - '\
+                     + responses[response.status_code] +'\n'\
+                           'For file: ' + filename + '\nWith url: ' + url
+            
+            if 'finance.yahoo' in url: #Yahoo json file
+                self.extract_yahoo_json(response.content, filename)
+            
+            elif 'fxtop' in url: #FXTOP fx file
+                self.extract_fxtop_html(response.content, filename)    
+            
+            else:
+                with open(filename, mode="wb") as file:
+                    file.write(response.content)
             
         self.download_status += 1
         self.process_bar(self.download_status*self.processing_inc, filename)            
             
         return
     
-    def json_to_csv(self, content, filename):
+    def extract_yahoo_json(self, content, filename):
         #Load yahoo html chart data as json file, extract data and save as csv
         
         js = json.loads(content)
@@ -241,3 +287,83 @@ class data_loader(base):
         
         df.to_csv(filename, index=False)
         return
+    
+    def extract_fxtop_html(self, content, filename):
+        #Load html table from html page source code and save as csv
+        
+        #Read the html page content into pandas dataframe. The output is an
+        #array of dataframes
+        df_list = pd.read_html(content)
+        
+        #Extract the largest dataframe from the list (this will be the table)
+        df = df_list[np.argmax([x.size for x in df_list])]
+        
+        df.to_csv(filename, index=False)
+        return
+    
+    def driver_download(self, url, filename):
+        #Open webpage to download the file
+        
+        driver = webdriver.Chrome()
+        #Set the waiting time for trying to find elements that have not been found
+        driver.implicitly_wait(10) 
+        
+        driver.get(url)
+        
+        #Change the term:
+        element = WebDriverWait(driver, 30).until(
+        EC.presence_of_element_located((webdriver.common.by.By.XPATH,\
+                                        "//select[contains(@id, 'updateTerm')]")))
+        select = Select(element)
+        
+        # select by visible text
+        select.select_by_visible_text('Full History')
+        
+        #Update data
+        element = WebDriverWait(driver, 30).until(
+        EC.presence_of_element_located((webdriver.common.by.By.XPATH,\
+                                        "//button[text()='Update']")))
+        element.click()
+        
+            
+        #Find the download button
+        element = WebDriverWait(driver, 30).until(
+        EC.presence_of_element_located((webdriver.common.by.By.XPATH,\
+                                        "//a[contains(text(), 'Download')]")))
+        
+        #Click!
+        download_timestamp = datetime.datetime.now().timestamp()
+        element.click()
+        
+        #Check if the file has downloaded:
+        still_downloading = True
+        while still_downloading:
+            time.sleep(.6)
+            newest_file = latest_download_file(self.download_folder, True)
+            if newest_file > download_timestamp:
+                still_downloading = False
+        
+        #Close once it has been downloaded
+        driver.close()
+        
+        new_df = pd.read_excel(self.latest_download_file(self.download_folder, False))
+        df = pd.read_excel(filename)
+        
+        #Find last data index
+        nan_inds = df.isnull(df).any(0).nonzero()[0]
+        df_last_index = nan_inds[nan_inds > 20][0] #Skip the set of nans at the top -> first one at the bottom
+        
+        nan_inds = new_df.isnull(df).any(0).nonzero()[0]
+        new_df_last_index = nan_inds[nan_inds > 20][0] #Skip the set of nans at the top -> first one at the bottom
+        
+        #Find the index to match:
+        
+        
+        
+    def latest_download_file(self, download_dir, return_time):
+        os.chdir(download_dir)
+        files = sorted(os.listdir(os.getcwd()), key=os.path.getmtime)
+        if return_time:
+            return os.path.getmtime(files[-1])
+        else:
+            return os.path.join(download_dir, files[-1])

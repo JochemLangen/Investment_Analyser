@@ -80,7 +80,7 @@ class portfolio(plotter, data_loader, fitter):
                           std_mult=std_mult, limit=limit, time_index=time_index)            
         return
         
-    def fetch_data(self, which='both'):
+    def fetch_data(self, which='all'):
         #Use data loader to download and clean the latest data
         #Update the data.xlsx sheet with the latest names
         #
@@ -88,12 +88,14 @@ class portfolio(plotter, data_loader, fitter):
         # but not for the index.
         
         
-        ## Download index data:
+        ## Set the file paths and download urls
         index_paths = np.empty_like(self.dataframe['Name'])
         index_filename = np.empty_like(index_paths)
+        
         security_paths = np.empty_like(index_paths)
         security_filename = np.empty_like(index_paths)
         
+        #Loop through securities to set up security path and filenames
         for index, filename in enumerate(self.dataframe['Name']):
             #Generating / extracting the index file name and path
             if isinstance(self.dataframe['Index_loc'][index], str):
@@ -119,15 +121,14 @@ class portfolio(plotter, data_loader, fitter):
             security_filename[index] = security_filename[index][:security_filename[index].rfind('.')] + '.xlsx'
 
         
-        if which == 'indices' or which == 'both':
+        if which == 'indices' or which == 'non-fx' or which == 'all':
             #Download the index files     
             self.download_indices(self.dataframe['Index_down'], index_paths)
             
             #Add the new index filenames to the dataframe and save
             self.dataframe['Index_loc'] = index_filename
-            self.save_dataframe()
         
-        if which == 'securities' or which == 'both':
+        if which == 'securities' or which == 'non-fx' or which == 'all':
             #Download the security files (no specific securities wrapper is needed for iShares, they are
             #automatically up-to-date)
             self.perform_download(self.dataframe['Security_down'], security_paths, 'Securities')
@@ -137,7 +138,31 @@ class portfolio(plotter, data_loader, fitter):
             
             #Add the new security filenames to the dataframe and save
             self.dataframe['Security_loc'] = security_filename
-            self.save_dataframe()
+            
+        if which == 'fx' or which == 'all':
+            
+            fx_paths = np.empty_like(self.dataframe['Currency'])
+            fx_filename = np.empty_like(fx_paths)
+            
+            for index, filename in enumerate(self.dataframe['Currency']):
+                #Generating / extracting the index file name and path
+                if isinstance(self.dataframe['Currency_loc'][index], str):
+                    fx_filename[index] = self.dataframe['Currency_loc'][index]
+                else:
+                    fx_filename[index]= filename.replace(' ', '_') + '-fxtop.csv'
+                    
+                fx_paths[index] = os.path.realpath(os.path.join(self.folder, '..', 'fx', fx_filename[index]))
+                
+            
+            
+            #Download the security files (no specific securities wrapper is needed for iShares, they are
+            #automatically up-to-date)
+            self.perform_download(self.dataframe['Currency_down'], fx_paths, 'FX')
+            
+            #Add the new security filenames to the dataframe and save
+            self.dataframe['Currency_loc'] = fx_filename
+            
+        self.save_dataframe()
         
         return
       
