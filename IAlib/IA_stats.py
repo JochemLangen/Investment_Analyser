@@ -1,6 +1,6 @@
 import numpy as np
 
-from IA_base import *
+from IAlib.IA_base import *
 
 class stats(base):
     script_location = os.path.realpath(__file__)

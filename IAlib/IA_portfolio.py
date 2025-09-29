@@ -4,12 +4,12 @@ import pandas as pd
 import pickle
 import pyautogui
 import re
-from IA_data_loader import *
-from IA_security import *
-from IA_plotter import *
-from IA_fitter import *
+from IAlib.IA_data_loader import *
+from IAlib.IA_security import *
+from IAlib.IA_plotter import *
+from IAlib.IA_backtrace import *
 
-class portfolio(plotter, data_loader, fitter):
+class portfolio(plotter, data_loader, backtrace):
     script_location = os.path.realpath(__file__)
     
     def __init__(self, data_location = os.path.realpath(\
@@ -20,10 +20,11 @@ class portfolio(plotter, data_loader, fitter):
         data_loader.__init__(self)
         
         self.dataframe = pd.read_excel(data_location)
+        valid_securities = self.dataframe['Name'].notnull()
         
         #Check whether all the data has been fetched:
-        if self.dataframe['Index_loc'].isnull().values.any() or \
-            self.dataframe['Security_loc'].isnull().values.any():
+        if self.dataframe['Index_loc'][valid_securities].isnull().values.any() or \
+            self.dataframe['Security_loc'][valid_securities].isnull().values.any():
             answer = pyautogui.confirm(text='Not all securities have their file locations defined.\n'\
                               +'Would you like to fetch all data? This may take some time.\n'+
                               'If not, an attempt will be made to use the available data.',\
@@ -34,18 +35,19 @@ class portfolio(plotter, data_loader, fitter):
         
         
         #Load all the securities from the data folder into a dictionary
-        self.securities = {}        
-        self.perform_task(self.dataframe['Name'], 'load_securities', load)
+        self.securities = {}
+        self.perform_task(self.dataframe['Name'][valid_securities], 'load_securities', load)
+        security_names = list(self.securities.keys())
         
-        if load == False: #Otherwise the files are reloaded i.e. had been processed before so these names should already be good
-            self.dataframe['Name'] = list(self.securities.keys())
+        if load == False and 'answer' not in locals(): #Otherwise the files are reloaded i.e. had been processed before so these names should already be good
+            self.dataframe['Name'][valid_securities] = security_names
             self.save_dataframe()
         
         #Calculate the return matrices per security:
-        self.perform_task(self.dataframe['Name'], 'calc_return_matrix_per_security', \
+        self.perform_task(security_names, 'calc_return_matrix_per_security', \
                           months=months, start_date=start_date)
         
-        self.months = self.securities[self.dataframe['Name'][0]].months
+        self.months = self.securities[security_names[0]].months
         
         return
 
@@ -89,14 +91,15 @@ class portfolio(plotter, data_loader, fitter):
         
         
         ## Set the file paths and download urls
-        index_paths = np.empty_like(self.dataframe['Name'])
+        valid_names = self.dataframe['Name'][self.dataframe['Name'].notnull()]
+        index_paths = np.empty_like(valid_names)
         index_filename = np.empty_like(index_paths)
         
         security_paths = np.empty_like(index_paths)
         security_filename = np.empty_like(index_paths)
         
         #Loop through securities to set up security path and filenames
-        for index, filename in enumerate(self.dataframe['Name']):
+        for index, filename in enumerate(valid_names):
             #Generating / extracting the index file name and path
             if isinstance(self.dataframe['Index_loc'][index], str):
                 index_filename[index] = self.dataframe['Index_loc'][index]
@@ -184,29 +187,32 @@ class portfolio(plotter, data_loader, fitter):
         
         index = self.dataframe['Name'][self.dataframe['Name'] == security_name].index[0]
         
-        if load == False:
-            sec_filepath = os.path.join(self.folder, self.dataframe['Security_loc'][index])
-            
-            if isinstance(self.dataframe['Index_loc'][index], str):
-                index_filepath = os.path.join(self.folder, '..', 'index', self.dataframe['Index_loc'][index])
-                sec = security(sec_filepath, index_filepath, calc_mat=False)
-            else:
-                sec = security(sec_filepath, calc_mat=False)
+        if not isinstance(self.dataframe['Security_loc'][index], str) or self.dataframe['Security_loc'][index] == '':
+            print('\nNo security location defined for {}, skipping...'.format(security_name))
+        else:
+            if load == False:
+                sec_filepath = os.path.join(self.folder, self.dataframe['Security_loc'][index])
                 
-            #Create the entry in the dataframe based on the security name directly, rather than its name
-            #in the Excel data sheet
-            self.securities[sec.name] = sec
-            
-        else: 
-            #Generate pickle file filename. Generated in the same way as when it is saved.
-            #This only works if the names in the data.xlsx file correspond with the pickle file names
-            pickle_path = os.path.join(self.folder, '..', 'pickles', \
-                                  security_name.replace(' ', '_')+'.pkl')
+                if isinstance(self.dataframe['Index_loc'][index], str):
+                    index_filepath = os.path.join(self.folder, '..', 'index', self.dataframe['Index_loc'][index])
+                    sec = security(sec_filepath, index_filepath, calc_mat=False)
+                else:
+                    sec = security(sec_filepath, calc_mat=False)
+                    
+                #Create the entry in the dataframe based on the security name directly, rather than its name
+                #in the Excel data sheet
+                self.securities[sec.name] = sec
                 
-            #Loading the pickle file. Note, as it had been created before the data.xlsx name should be correct
-            with open(pickle_path, 'rb') as file:
-                self.securities[security_name] = pickle.load(file)
-
+            else: 
+                #Generate pickle file filename. Generated in the same way as when it is saved.
+                #This only works if the names in the data.xlsx file correspond with the pickle file names
+                pickle_path = os.path.join(self.folder, '..', 'pickles', \
+                                    security_name.replace(' ', '_')+'.pkl')
+                    
+                #Loading the pickle file. Note, as it had been created before the data.xlsx name should be correct
+                with open(pickle_path, 'rb') as file:
+                    self.securities[security_name] = pickle.load(file)
+        
         return
     
     def calc_return_matrix_per_security(self, name, **kwargs):

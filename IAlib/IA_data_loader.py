@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-
 import pandas as pd
 from bs4 import BeautifulSoup
 import os
@@ -16,17 +14,17 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from IA_base import *
+from IAlib.IA_base import *
 
 class data_loader(base):
     script_location = os.path.realpath(__file__)
     
     def __init__(self, folder_location = os.path.realpath(
-            os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                                      '..', 'data', 'security'))):
+            os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'data', 'security')),
+                download_folder = r'C:\Users\joche\Downloads'):
         self.folder = folder_location # default = <repo. location>\data
         self.download_status = 0
-        self.download_folder = "D:\Jochem\Downloads"
+        self.download_folder = download_folder
         return
     
     ## Cleaning files:

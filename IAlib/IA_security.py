@@ -5,10 +5,10 @@ from scipy.interpolate import PchipInterpolator
 import datetime
 import pickle
 
-from IA_plotter import *
-from IA_fitter import *
+from IAlib.IA_plotter import *
+from IAlib.IA_backtrace import *
 
-class security(plotter, fitter):
+class security(plotter, backtrace):
     script_location = os.path.realpath(__file__)
     
     # Zero point after which to start counting (at 1953 01 Jan, tick = 1)

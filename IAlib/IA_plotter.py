@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 # from scipy.stats import norm
 import scipy.stats
 
-from IA_stats import *
+from IAlib.IA_stats import *
 
 class plotter(stats):
     script_location = os.path.realpath(__file__)
@@ -19,26 +19,31 @@ class plotter(stats):
         
         std_mult = np.asarray(std_mult)
         
-        #Cumulative return
-        fig = plt.figure()
+        #Create figure with appropriate size
+        fig = plt.figure(figsize=(16, 10))
         
-        ax1 = fig.add_axes((0,0,1,1))
+        #Cumulative return
+        ax1 = fig.add_axes([0.1, 0.55, 0.45, 0.35])
         plt.title(title_input, fontsize=self.fontsize, loc='left')
                   
-        self.__generate_plot(ax1, std_array, std_err, time, std_mult, limit_mult, \
+        ax1 = self.__generate_plot(ax1, std_array, std_err, time, std_mult, limit_mult, \
                              ylabel='Cum. Relative Return (%)', xlabel=None)
         
         #Annual return
-        ax2 = fig.add_axes((0,-1.15,1,1))
-        self.__generate_plot(ax2, std_array[:,2:], std_err[:,2:], \
+        ax2 = fig.add_axes([0.1, 0.1, 0.45, 0.35])
+        ax2 = self.__generate_plot(ax2, std_array[:,2:], std_err[:,2:], \
                              time, std_mult, limit_mult, ylabel='Avg. Annualised Relative Return (%)')
         plt.title('Avg. Annualised Relative Return at {} months: {}%'.format(\
                      time[time_index], round(std_array[time_index, 2],2)), fontsize=self.fontsize)
         
-        ax3 = fig.add_axes((1.15, -0.525, 1, 1))
-        self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
-            
-        # fig.show()
+        #Distribution plot
+        ax3 = fig.add_axes([0.65, 0.1, 0.3, 0.8])
+        ax3 = self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
+        
+        #Display
+        # Turn off interactive mode to prevent figures from being automatically closed
+        plt.ioff()
+        plt.show(block=False)
         
         return
     
@@ -94,7 +99,7 @@ class plotter(stats):
 
         plt.xticks(fontsize=self.fontsize)
 
-        return
+        return ax
     
     def __distr_plot(self, ax, y_mat, std_mult, time, time_index):
         
@@ -174,7 +179,7 @@ class plotter(stats):
                   fontsize=self.fontsize)
 
 
-        return
+        return ax
     
     def full_plot(self):
         #Will also include historic data of the portfolio
