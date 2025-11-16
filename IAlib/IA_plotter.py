@@ -40,11 +40,6 @@ class plotter(stats):
         ax3 = fig.add_axes([0.65, 0.1, 0.3, 0.8])
         ax3 = self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
         
-        #Display
-        # Turn off interactive mode to prevent figures from being automatically closed
-        plt.ioff()
-        plt.show(block=False)
-        
         return
     
     def __generate_plot(self, ax, std_array, std_err, time, std_mult, limit_mult, \
