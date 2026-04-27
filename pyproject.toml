@@ -47,8 +47,6 @@ investment_analyser = "src"
 [tool.ruff]
 line-length = 100
 target-version = "py38"
-select = ["E", "F", "W", "I", "N", "UP", "C", "B"]
-ignore = ["E203", "W503"]
 exclude = [
     ".eggs",
     ".git",
@@ -60,8 +58,9 @@ exclude = [
     "dist",
 ]
 
-[tool.ruff.isort]
-profile = "black"
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "C", "B"]
+ignore = ["E203"]
 
 [tool.mypy]
 python_version = "3.8"
