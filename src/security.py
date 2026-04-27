@@ -5,8 +5,8 @@ from scipy.interpolate import PchipInterpolator
 import datetime
 import pickle
 
-from IAlib.IA_plotter import *
-from IAlib.IA_backtrace import *
+from investment_analyser.plotter import *
+from investment_analyser.backtrace import *
 
 class security(plotter, backtrace):
     script_location = os.path.realpath(__file__)

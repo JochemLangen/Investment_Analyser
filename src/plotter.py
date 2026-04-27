@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 # from scipy.stats import norm
 import scipy.stats
 
-from IAlib.IA_stats import *
+from investment_analyser.stats import *
 
 class plotter(stats):
     script_location = os.path.realpath(__file__)

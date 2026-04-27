@@ -4,10 +4,10 @@ import pandas as pd
 import pickle
 import pyautogui
 import re
-from IAlib.IA_data_loader import *
-from IAlib.IA_security import *
-from IAlib.IA_plotter import *
-from IAlib.IA_backtrace import *
+from investment_analyser.data_loader import *
+from investment_analyser.security import *
+from investment_analyser.plotter import *
+from investment_analyser.backtrace import *
 
 class portfolio(plotter, data_loader, backtrace):
     script_location = os.path.realpath(__file__)

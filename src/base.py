@@ -8,6 +8,9 @@ import pandas as pd
 
 class base:
     script_location = os.path.realpath(__file__)
+    data_location = os.path.realpath(
+            os.path.join(os.path.dirname(script_location), '..', 'data')
+    )
     
     def __init__(self):
         return

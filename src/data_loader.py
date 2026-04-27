@@ -14,15 +14,16 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from IAlib.IA_base import *
+from investment_analyser.base import base
 
 class data_loader(base):
     script_location = os.path.realpath(__file__)
     
-    def __init__(self, folder_location = os.path.realpath(
-            os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'data', 'security')),
-                download_folder = r'C:\Users\joche\Downloads'):
-        self.folder = folder_location # default = <repo. location>\data
+    def __init__(self, 
+            folder_location = None,
+            download_folder = r'C:\Users\joche\Downloads'
+        ):
+        self.folder = os.path.join(self.data_location, 'security') if folder_location is None else folder_location # default = <repo. location>\data
         self.download_status = 0
         self.download_folder = download_folder
         return

@@ -2,7 +2,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.interpolate import PchipInterpolator
-from IAlib.IA_stats import *
+from investment_analyser.stats import *
 
 class backtrace(base):
     script_location = os.path.realpath(__file__)

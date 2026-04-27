@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from IAlib.IA_portfolio import *
+from investment_analyser.portfolio import *
 
 p = portfolio()
 p.plot_securities()
