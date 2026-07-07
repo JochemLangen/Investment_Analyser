@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from os.path import realpath
 
 # from scipy.stats import norm
 import scipy.stats
@@ -7,7 +8,7 @@ from investment_analyser.stats import Stats
 
 
 class Plotter(Stats):
-    script_location = os.path.realpath(__file__)
+    script_location = realpath(__file__)
 
     def __init__(self, fontsize=15, tickwidth=2, ticklength=4):
         self.fontsize = fontsize

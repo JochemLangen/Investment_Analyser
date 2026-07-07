@@ -1,5 +1,5 @@
 
-import os
+from os import path
 import sys
 
 import numpy as np
@@ -7,8 +7,8 @@ import pandas as pd
 
 
 class Base:
-    script_location = os.path.realpath(__file__)
-    data_location = os.path.realpath(os.path.join(os.path.dirname(script_location), "..", "data"))
+    script_location = path.realpath(__file__)
+    data_location = path.realpath(path.join(path.dirname(script_location), "..", "data"))
 
     def __init__(self):
         return

@@ -4,6 +4,7 @@ import json
 import os
 import re
 from http.client import responses
+import numpy as np
 
 import pandas as pd
 import requests
@@ -44,7 +45,10 @@ class DataLoader(Base):
                 file_ext = os.path.splitext(file)[1]
 
                 # Check the file type (data source -> determines how it should be handled)
-                if file.find("iShares") != -1 and (file_ext == ".xls" or file_ext == ".xlsx"):
+                if (
+                    (file.find("iShares") != -1 or file.find("STOXX") != -1)
+                    and (file_ext == ".xls" or file_ext == ".xlsx")
+                ):
                     # For iShares, .xls files are not formatted correctly yet
                     if file_ext == ".xls":
                         # Add files to the "to be cleaned list
@@ -59,7 +63,8 @@ class DataLoader(Base):
                         + "If this file type should be supported, implement it in: \n"
                         + self.script_location
                         + "\n\nCurrently, the only supported files are: \n"
-                        + "'iShares*.xls'\n'iShares*.xlsx'"
+                        + "'iShares*.xls'\n'iShares*.xlsx'\n"
+                        + "'STOXX*.xls'\n'STOXX*.xlsx'"
                     )
 
         self.perform_task(cleaning_files, "xml_to_xlsx")
@@ -176,6 +181,7 @@ class DataLoader(Base):
         current_time = datetime.datetime.now()
         timestamp = str(int(np.floor(current_time.timestamp())))
         urls = np.empty_like(url_templates)
+        undownloadable_files = []
 
         for index, url_temp in enumerate(url_templates):
             if "finance.yahoo" in url_temp:
@@ -188,12 +194,19 @@ class DataLoader(Base):
                     urls[index] = re.sub(
                         "period1=-.+(?=&period2)", "period1=7200", urls[index]
                     )  # Set lowest start time to 1971-01-02 (i.e. 0 ticker)
-
             else:
-                raise ValueError("Currently, only Yahoo Finance index data sets are supported.")
+                undownloadable_files.append(index)
+
+        urls = np.delete(urls, undownloadable_files)
+
+        if undownloadable_files:
+            print(
+                "Currently, downloading is only supported for Yahoo Finance index data sets."
+                " Several index files are therefore ignored in the downloading process.\n"
+                "Download these files manually."
+            )
 
         self.perform_download(urls, filenames, "Index files")
-
         return
 
     def download_fx(self, url_templates, filenames):
@@ -204,7 +217,7 @@ class DataLoader(Base):
 
         current_time = datetime.datetime.now()
         month = str(current_time.month).zfill(2)  # Get the month and add zero if needed
-        year = str(current.time.year)
+        year = str(current_time.year)
         urls = np.empty_like(url_templates)
 
         # Don't redownload ecb data
@@ -217,7 +230,7 @@ class DataLoader(Base):
                 urls[index] = re.sub("YYYY2=-.+(?=&b)", "YYYY2=" + year, urls[index])
 
             else:
-                raise ValueError("Currently, only FXTOP fx data sets are supported.")
+                print("Currently, only FXTOP fx data sets are supported.")
 
         self.perform_download(urls, filenames, "FX files")
 
@@ -241,8 +254,12 @@ class DataLoader(Base):
 
                 # Check if there's an error and throw
                 for future in concurrent.futures.as_completed(result_futures):
-                    if future.result() != None:
+                    if future is None:
+                        raise ConnectionError("Download failed for an unknown reason.")
+
+                    if future.result() is not None:
                         raise ConnectionError(future.result())
+            item = "Done downloading files!"
         else:
             item = "Nothing to download"
 
@@ -255,10 +272,12 @@ class DataLoader(Base):
         self.download_status = 0
         return
 
-    def download_file(self, url, filename):
+    def download_file(self, url: str, filename: str):
 
         if "msci.com" in url:
-            self.driver_download(url, filename)
+            pass
+            print("MSCI index files should be downloaded manually for now.\n")
+            # self.driver_download(url, filename)
         else:
             response = requests.get(url, headers={"User-agent": "InkJDog"})
 
@@ -280,7 +299,8 @@ class DataLoader(Base):
 
             elif "fxtop" in url:  # FXTOP fx file
                 self.extract_fxtop_html(response.content, filename)
-
+            # Nothing specific yet for bank of England FX
+            # Nothing specific yet for MSCI index page (not the general country app)
             else:
                 with open(filename, mode="wb") as file:
                     file.write(response.content)
@@ -347,6 +367,8 @@ class DataLoader(Base):
         )
         element.click()
 
+        # FIRST STILL SELECT NET INSTEAD OF PRICE FOR INDEX LEVEL
+
         # Find the download button
         element = WebDriverWait(driver, 30).until(
             EC.presence_of_element_located(
@@ -362,7 +384,7 @@ class DataLoader(Base):
         still_downloading = True
         while still_downloading:
             time.sleep(0.6)
-            newest_file = latest_download_file(self.download_folder, True)
+            newest_file = self.latest_download_file(self.download_folder, True)
             if newest_file > download_timestamp:
                 still_downloading = False
 

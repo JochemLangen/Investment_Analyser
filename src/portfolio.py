@@ -22,6 +22,7 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         months=[],
         start_date=None,
         load=False,
+        overwrite_new_file_names=False,
     ):
 
         Plotter.__init__(self)
@@ -51,7 +52,7 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         security_names = list(self.securities.keys())
 
         if (
-            load == False and "answer" not in locals()
+            overwrite_new_file_names == True and load == False and "answer" not in locals()
         ):  # Otherwise the files are reloaded i.e. had been processed before so these names should already be good
             self.dataframe["Name"][valid_securities] = security_names
             self.save_dataframe()
@@ -130,6 +131,8 @@ class Portfolio(Plotter, DataLoader, Backtrace):
             # Generating / extracting the index file name and path
             if isinstance(self.dataframe["Index_loc"][index], str):
                 index_filename[index] = self.dataframe["Index_loc"][index]
+            elif "Nothing" in self.dataframe["Index_down"][index]:
+                index_filename[index] = "Nothing"
             else:
                 index_filename[index] = filename.replace(" ", "_") + "-yahoo.csv"
 
@@ -177,26 +180,27 @@ class Portfolio(Plotter, DataLoader, Backtrace):
             self.dataframe["Security_loc"] = security_filename
 
         if which == "fx" or which == "all":
-            fx_paths = np.empty_like(self.dataframe["Currency"])
-            fx_filename = np.empty_like(fx_paths)
+            print("FX files should be downloaded manually for now.")
+            # fx_paths = np.empty_like(self.dataframe["Currency"])
+            # fx_filename = np.empty_like(fx_paths)
 
-            for index, filename in enumerate(self.dataframe["Currency"]):
-                # Generating / extracting the index file name and path
-                if isinstance(self.dataframe["Currency_loc"][index], str):
-                    fx_filename[index] = self.dataframe["Currency_loc"][index]
-                else:
-                    fx_filename[index] = filename.replace(" ", "_") + "-fxtop.csv"
+            # for index, filename in enumerate(self.dataframe["Currency"]):
+            #     # Generating / extracting the index file name and path
+            #     if isinstance(self.dataframe["Currency_loc"][index], str):
+            #         fx_filename[index] = self.dataframe["Currency_loc"][index]
+            #     else:
+            #         fx_filename[index] = filename.replace(" ", "_") + "-fxtop.csv"
 
-                fx_paths[index] = os.path.realpath(
-                    os.path.join(self.folder, "..", "fx", fx_filename[index])
-                )
+            #     fx_paths[index] = os.path.realpath(
+            #         os.path.join(self.folder, "..", "fx", fx_filename[index])
+            #     )
 
-            # Download the security files (no specific securities wrapper is needed for iShares, they are
-            # automatically up-to-date)
-            self.perform_download(self.dataframe["Currency_down"], fx_paths, "FX")
+            # # Download the security files (no specific securities wrapper is needed for iShares, they are
+            # # automatically up-to-date)
+            # self.perform_download(self.dataframe["Currency_down"], fx_paths, "FX")
 
-            # Add the new security filenames to the dataframe and save
-            self.dataframe["Currency_loc"] = fx_filename
+            # # Add the new security filenames to the dataframe and save
+            # self.dataframe["Currency_loc"] = fx_filename
 
         self.save_dataframe()
 
@@ -221,6 +225,9 @@ class Portfolio(Plotter, DataLoader, Backtrace):
     def load_securities(self, security_name, load=False):
 
         index = self.dataframe["Name"][self.dataframe["Name"] == security_name].index[0]
+        if self.dataframe["Used"][index] == 0:
+            print(f"\n{security_name} is not used in the portfolio, skipping...")
+            return
 
         if (
             not isinstance(self.dataframe["Security_loc"][index], str)
@@ -230,14 +237,15 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         else:
             if load == False:
                 sec_filepath = os.path.join(self.folder, self.dataframe["Security_loc"][index])
+                dist_fund = self.dataframe["Dist_fund"][index] == 1
 
                 if isinstance(self.dataframe["Index_loc"][index], str):
                     index_filepath = os.path.join(
                         self.folder, "..", "index", self.dataframe["Index_loc"][index]
                     )
-                    sec = Security(sec_filepath, index_filepath, calc_mat=False)
+                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, calc_mat=False)
                 else:
-                    sec = Security(sec_filepath, calc_mat=False)
+                    sec = Security(sec_filepath, dist_fund=dist_fund, calc_mat=False)
 
                 # Create the entry in the dataframe based on the security name directly, rather than its name
                 # in the Excel data sheet

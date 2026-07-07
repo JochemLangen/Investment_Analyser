@@ -1,9 +1,10 @@
 import numpy as np
+from os.path import realpath
 from investment_analyser.base import Base
 
 
 class Stats(Base):
-    script_location = os.path.realpath(__file__)
+    script_location = realpath(__file__)
 
     def __init__(self):
         return

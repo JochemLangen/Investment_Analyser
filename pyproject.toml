@@ -19,6 +19,7 @@ dependencies = [
     "scipy>=1.7.0",
     "matplotlib>=3.4.0",
     "beautifulsoup4>=4.9.0",
+    "lxml>=6",
     "requests>=2.26.0",
     "selenium>=4.0.0",
     "pyautogui>=0.9.53",

@@ -17,13 +17,13 @@ class Security(Plotter, Backtrace):
     zero_point = 1952
 
     def __init__(
-        self, fpath, index_fpath=None, months=[], start_date=None, calc_ortho=True, calc_mat=True
+        self, fpath, index_fpath=None, dist_fund=False, months=[], start_date=None, calc_ortho=True, calc_mat=True
     ):
         #
         # start_date: format is dd/mm/yyyy. Minimum is 02/01/1970
         Plotter.__init__(self)
 
-        self.__extract_security(fpath)
+        self.__extract_security(fpath, dist_fund=dist_fund)
 
         if index_fpath != None:
             self.__extract_index(index_fpath)
@@ -31,11 +31,13 @@ class Security(Plotter, Backtrace):
             self.security_tick_time = self.tick_time.copy()
             self.security_return_series = self.return_series.copy()
 
-            self.return_series, self.tick_time, self.backtracing = self.backtrace_data(
-                self.return_series,
-                self.index_return_series,
-                self.tick_time,
-                self.index_tick_time,
+            self.return_series, self.tick_time, self.orig_tick_time, self.backtracing = self.backtrace_data(
+                y=self.return_series,
+                y_old=self.index_return_series,
+                t=self.tick_time,
+                t_old=self.index_tick_time,
+                t_orig=self.orig_tick_time,
+                t_orig_old=self.orig_index_tick_time,
                 calc_ortho=calc_ortho,
             )
 
@@ -46,7 +48,7 @@ class Security(Plotter, Backtrace):
 
         return
 
-    def __extract_security(self, fpath):
+    def __extract_security(self, fpath, dist_fund=False):
 
         ## Extract the data
         # Extract the file extension
@@ -55,7 +57,10 @@ class Security(Plotter, Backtrace):
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find("iShares") != -1 and file_ext == ".xlsx":
             # Read the excel file:
-            excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
+            if dist_fund == True:
+                excel = pd.read_excel(fpath, sheet_name=[1, 2, 4], header=None)
+            else:
+                excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
 
             self.name = excel[1][0][0]  # Name of the security
             self.inception = excel[1][1][6]  # Inception data
@@ -66,16 +71,47 @@ class Security(Plotter, Backtrace):
             self.benchmark = excel[1][1][11]
             self.currency = excel[1][1][8]
 
-            orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]), time_form="iShares")
-            orig_return = excel[2][2][1:]
+            self.orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]), time_form="iShares")
+            orig_return = excel[2][5][1:]
 
             # Remove entries with '--' and reverse order (from start to now)
             numeric_entries = ~orig_return.str.contains("-", na=False)
-            orig_tick_time = orig_tick_time[numeric_entries][::-1]
-            orig_return = orig_return[numeric_entries][::-1]
+            self.orig_tick_time = self.orig_tick_time[numeric_entries][::-1]
+            orig_return = np.asarray(orig_return[numeric_entries][::-1], dtype=float)
 
-            # Turn array into float
-            orig_return = np.asarray(orig_return, dtype=float)
+            if dist_fund == True:
+                dividend_tick_time = self.convert_time(np.asarray(excel[4][0][1:]), time_form="iShares")
+                dividend_return = excel[4][2][1:]
+
+                # Remove entries with '--' and reverse order (from start to now)
+                numeric_entries_div = ~dividend_return.str.contains("-", na=False)
+                dividend_tick_time = dividend_tick_time[numeric_entries_div][::-1]
+                dividend_return = np.asarray(dividend_return[numeric_entries_div][::-1], dtype=float)
+
+                # Extract per security NAV in security currency
+                nav = excel[2][2][1:]
+                nav = nav[numeric_entries][::-1]
+
+                # Align NAV values to the dividend dates in a vectorized way.
+                idx = np.searchsorted(self.orig_tick_time, dividend_tick_time)
+
+                # Check if the dividends do actually fall within the nav time-series (in principle
+                # it always should)
+                if idx[-1] >= len(self.orig_tick_time):
+                    idx = idx[:-1]
+                    dividend_return = dividend_return[:-1]
+
+                if not np.all(self.orig_tick_time[idx] == dividend_tick_time):
+                    raise ValueError("Some dividend dates could not be matched to NAV dates.")
+
+                dividend_nav = np.asarray(nav[idx], dtype=float)
+                rel_dividend_return = dividend_return / dividend_nav
+
+                # Apply dividend effects to all subsequent returns in a vectorized way.
+                dividend_factors = np.ones(len(orig_return), dtype=float)
+                dividend_factors[idx] = rel_dividend_return
+                dividend_factors = np.cumprod(dividend_factors)
+                orig_return = orig_return * dividend_factors
 
         elif fpath.find("iShares") != -1 and file_ext == ".xls":
             raise ValueError(
@@ -96,9 +132,9 @@ class Security(Plotter, Backtrace):
         ## Interpolate data to full dataset
         # (interpolation is done so the return can be calculated on all data and sampling
         # biases are removed)
-        self.tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1, dtype=int)
+        self.tick_time = np.arange(self.orig_tick_time[0], self.orig_tick_time[-1], 1, dtype=int)
         # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
-        self.return_series = PchipInterpolator(orig_tick_time, orig_return)(self.tick_time)
+        self.return_series = PchipInterpolator(self.orig_tick_time, orig_return)(self.tick_time)
 
         return
 
@@ -111,21 +147,15 @@ class Security(Plotter, Backtrace):
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find("yahoo") != -1 and file_ext == ".csv":
             # Read csv file
-            Excel = pd.read_csv(fpath)
+            excel = pd.read_csv(fpath)
 
-            if "Date" in Excel.columns:  # Old format, with download API:
+            if "Date" in excel.columns:  # Old format, with download API:
                 # Extract time
-                datetime_series = pd.to_datetime(Excel["Date"][1:], format="%d/%m/%Y")
+                datetime_series = pd.to_datetime(excel["Date"][1:], format="%d/%m/%Y")
 
                 timestamps = datetime_series.apply(lambda x: x.timestamp())
-
-                # Extract return series
-                orig_return = np.array(Excel["Adj Close"][1:])
-
-            elif "Timestamp" in Excel.columns:  # New format from json data in chart
-                timestamps = Excel["Timestamp"][1:]
-
-                orig_return = np.array(Excel["Adj Close"][1:])
+            elif "Timestamp" in excel.columns:  # New format from json data in chart
+                timestamps = excel["Timestamp"][1:]
             else:
                 raise ValueError(
                     "The following Yahoo data file has an unsupported format: \n"
@@ -136,10 +166,23 @@ class Security(Plotter, Backtrace):
                 )
 
             # Convert time to iShares format
-            orig_tick_time = self.convert_time(np.array(timestamps), time_form="Yahoo")
+            self.orig_index_tick_time = self.convert_time(np.array(timestamps), time_form="Generic")
 
-            # Turn array into float
-            orig_return = np.asarray(orig_return, dtype=float)
+            # Extract return series
+            orig_return = np.array(excel["Adj Close"][1:], dtype=float)
+
+        elif fpath.find("MSCI") != -1 and file_ext == ".xlsx":
+             # Read xlsx file
+            excel = pd.read_excel(fpath)
+
+            time = excel["Unnamed: 0"][5:]
+            timestamps = pd.to_datetime(time, format='%Y-%m-%d').apply(lambda x: x.timestamp())
+
+            # Convert time to iShares format
+            self.orig_index_tick_time = self.convert_time(np.array(timestamps), time_form="Generic")
+
+            # Extract return series
+            orig_return = np.array(excel["Unnamed: 1"][5:], dtype=float)
         else:
             raise ValueError(
                 "The following data file has been found but is not supported: \n"
@@ -154,9 +197,9 @@ class Security(Plotter, Backtrace):
         ## Interpolate data to full dataset
         # (interpolation is done so the return can be calculated on all data and sampling
         # biases are removed)
-        self.index_tick_time = np.arange(orig_tick_time[0], orig_tick_time[-1], 1, dtype=int)
+        self.index_tick_time = np.arange(self.orig_index_tick_time[0], self.orig_index_tick_time[-1], 1, dtype=int)
         # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
-        self.index_return_series = PchipInterpolator(orig_tick_time, orig_return)(
+        self.index_return_series = PchipInterpolator(self.orig_index_tick_time, orig_return)(
             self.index_tick_time
         )
 
@@ -214,7 +257,7 @@ class Security(Plotter, Backtrace):
                 dtype=int,
             )[:, 0]
 
-        elif time_form == "Yahoo":
+        elif time_form == "Generic":
             # Turn the datetime ticks into date ticks and add the offset to be consistent with iShares format
             datetime_ticks = np.empty_like(time_array, dtype=int)
 

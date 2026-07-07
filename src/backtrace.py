@@ -1,17 +1,19 @@
 import numpy as np
+from os.path import realpath
 from investment_analyser.stats import Base
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import curve_fit
 
 
 class Backtrace(Base):
-    script_location = os.path.realpath(__file__)
+    script_location = realpath(__file__)
 
     def __init__(self):
         return
 
     def backtrace_data(
-        self, y, y_old, t, t_old, model_type="Osc", smth_index_rng=5, calc_ortho=False
+        self, y, y_old, t, t_old, t_orig, t_orig_old,
+        model_type="Osc", smth_index_rng=5, calc_ortho=False,
     ):
         # Used to fit the index data to the security data and extrapolate backwards
         # Creating security data that goes as far back as the index data
@@ -147,6 +149,13 @@ class Backtrace(Base):
         new_y[-y_len:] = y
         new_t = t_old[1:]
 
+        # Define the new timestamps of the original (non-interpolated) data from the combined
+        # backtraced dataset
+        new_orig_t = np.append(
+            t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))+1],
+            t_orig
+        )
+
         # Use interpolation to smooth the transition from the fitted old data to the new data
         delete_indices = np.arange(-smth_index_rng, smth_index_rng + 1, 1) - y_len
         gap_y = np.delete(new_y, delete_indices)
@@ -220,7 +229,7 @@ class Backtrace(Base):
 
             results["Max exp_trig orth"] = np.max(ortho)
 
-        return smooth_y, new_t, results
+        return smooth_y, new_t, new_orig_t, results
 
     def exp_backtrace_model(self, x, a, b, exp_rat):
         # Define the function to be fitted:
