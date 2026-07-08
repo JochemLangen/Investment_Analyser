@@ -36,23 +36,17 @@ class Backtrace(Base):
             t = t[sort_t]
 
         # Slice the old data to be on the same timescale as the security y_data (+ one element back)
-        t_old_inception_idx = np.argmin(np.abs(t_old - t[0]))
-        t_old_end_idx = np.argmin(np.abs(t_old - t[-1]))
-        y_len = t_old_end_idx - t_old_inception_idx # Note, y_old may have an earlier cut off date than y
-        short_y_old = y_old[t_old_inception_idx-1:t_old_end_idx+1]
-        short_t_old = t_old[t_old_inception_idx-1:t_old_end_idx+1]
-
+        y_len = len(y)
+        short_y_old = y_old[-(1 + y_len) :]
+        short_t_old = t_old[-(1 + y_len) :]
 
         # Normalise y_old, t_old and y data:
         y_n_factor = max(y)
-        y_norm = y[:np.argmin(np.abs(t - t_old[-1]))+1] / y_n_factor
+        y_norm = y / y_n_factor
         y_old_n_factor = max(short_y_old)
         y_old_norm = short_y_old / y_old_n_factor
         t_old_n_factor = short_t_old[-1]
         t_old_norm = short_t_old / t_old_n_factor
-        
-        print(short_y_old, short_t_old, y_norm, t)
-        print(short_y_old.shape, short_t_old.shape, y_norm.shape, t.shape)
 
         # Create the input data
         comb_input = np.asarray([y_old_norm, t_old_norm])
@@ -153,11 +147,9 @@ class Backtrace(Base):
         # Evaluate the fitted model and create the new data curve
         comb_input = np.asarray([y_old, t_old])
         fitted_y = model(comb_input, *popt)
-        print(comb_input.shape)
-        print(fitted_y.shape)
-        new_y = np.append(fitted_y[:t_old_inception_idx], y)
-        new_t = np.append(t_old[1:t_old_inception_idx], t)
-        print(new_y.shape, new_t.shape)
+        new_y = fitted_y.copy()
+        new_y[-y_len:] = y
+        new_t = t_old[1:]
 
         # Define the new timestamps of the original (non-interpolated) data from the combined
         # backtraced dataset
@@ -167,7 +159,7 @@ class Backtrace(Base):
         )
 
         # Use interpolation to smooth the transition from the fitted old data to the new data
-        delete_indices = np.arange(-smth_index_rng, smth_index_rng + 1, 1) + t_old_inception_idx
+        delete_indices = np.arange(-smth_index_rng, smth_index_rng + 1, 1) - y_len
         gap_y = np.delete(new_y, delete_indices)
         gap_t = np.delete(new_t, delete_indices)
         smooth_y = PchipInterpolator(gap_t, gap_y)(new_t)
