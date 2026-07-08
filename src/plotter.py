@@ -6,6 +6,7 @@ from os.path import realpath
 # from scipy.stats import norm
 import scipy.stats
 from investment_analyser.stats import Stats
+from investment_analyser.backtrace import DEFAULT_SMOOTHENING_RANGE
 
 
 class Plotter(Stats):
@@ -72,13 +73,17 @@ class Plotter(Stats):
         orig_return_series = return_series[np.isin(tick_time, orig_tick_time)]
         orig_return_series = orig_return_series / orig_return_series[0] * 100
 
-        if index_return_series is not None:
+        if len(index_return_series) > 0:
             orig_index_return_series = index_return_series[np.isin(index_tick_time, orig_index_tick_time)]
+            valid_index_ticks = orig_index_tick_time >= orig_tick_time[0]
+
+            orig_index_tick_time = orig_index_tick_time[valid_index_ticks]
+            orig_index_return_series = orig_index_return_series[valid_index_ticks]
             orig_index_return_series = orig_index_return_series / orig_index_return_series[0] * 100
 
         # Determine the average annual return over the entire period
         year_diff = (orig_tick_time[-1] - orig_tick_time[0])/365.25
-        avg_annual_return = (((orig_return_series[-1] - orig_return_series[0])/100)**(1/year_diff) - 1)*100
+        avg_annual_return = ((orig_return_series[-1]/100)**(1/year_diff) - 1)*100
 
         # Format tick time back to datetime format
         t = self.revert_timeseries_back(orig_tick_time)
@@ -107,7 +112,7 @@ class Plotter(Stats):
         ax.plot([t[0], t[-1]], [orig_return_series[0], orig_return_series[-1]], color="gray", linestyle=":", label=f"{avg_annual_return:.2f}% annual return")
         t_str_inception = dt.datetime.utcfromtimestamp(int(np.round(t_inception[0]))).strftime("%Y/%m/%d")
         ax.plot([t_inception, t_inception], [lim_min, lim_max], color="red", linestyle="--", label=f"Security Inception: {t_str_inception}")
-        if index_return_series is not None:
+        if len(index_return_series) > 0:
             ax.plot(t_index, orig_index_return_series, color="green", label="Raw Index")
         ax.plot(t, orig_return_series, color="black", label="Index (incl. dividends) + Security")
 
@@ -121,7 +126,7 @@ class Plotter(Stats):
         self._set_ticks(ax, t)
 
         # Second plot
-        if backtrace_factor_series is not None:
+        if len(backtrace_factor_series) > 0:
             # Also normalise this to one, this does not necessarily need to start at one,
             # but the index and security data above have also been normalised, so this data should match
             backtrace_factor_series = backtrace_factor_series/ backtrace_factor_series[0]
@@ -170,8 +175,8 @@ class Plotter(Stats):
                 )
 
         # Plot 3
-        if index_return_series is not None and backtrace_series is not None:
-            valid_index_ticks = index_tick_time[1:] >= security_start_tick
+        if len(index_return_series) > 0 and len(backtrace_series) > 0:
+            valid_index_ticks = index_tick_time[1:] >= (security_start_tick + DEFAULT_SMOOTHENING_RANGE)
             backtrace_series = backtrace_series[valid_index_ticks]
             backtrace_series = backtrace_series / backtrace_series[0] * 100
 
@@ -180,7 +185,7 @@ class Plotter(Stats):
 
             t_fit_index = index_tick_time[1:][valid_index_ticks]
 
-            valid_ticks = tick_time >= security_start_tick
+            valid_ticks = tick_time >= (security_start_tick + DEFAULT_SMOOTHENING_RANGE)
             return_series = return_series[valid_ticks]
             return_series = return_series / return_series[0] * 100
 
@@ -188,7 +193,11 @@ class Plotter(Stats):
 
             # Determine the average annual return over the entire period
             year_diff = (t_fit[-1] - t_fit[0])/365.25
-            avg_annual_return = (((return_series[-1] - return_series[0])/100)**(1/year_diff) - 1)*100
+            avg_annual_return = ((return_series[-1]/100)**(1/year_diff) - 1)*100
+            print(year_diff)
+            print(avg_annual_return)
+            print(return_series[-1] - return_series[0])
+
 
             t_fit = self.revert_timeseries_back(t_fit)
             t_fit_index = self.revert_timeseries_back(t_fit_index)

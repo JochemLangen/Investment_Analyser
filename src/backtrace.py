@@ -3,7 +3,9 @@ from os.path import realpath
 from investment_analyser.stats import Base
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import curve_fit
+from warnings import warn
 
+DEFAULT_SMOOTHENING_RANGE = 5
 
 class Backtrace(Base):
     script_location = realpath(__file__)
@@ -13,7 +15,7 @@ class Backtrace(Base):
 
     def backtrace_data(
         self, y, y_old, t, t_old, t_orig, t_orig_old,
-        model_type="Osc", smth_index_rng=5, calc_ortho=False,
+        model_type="Osc", smth_index_rng=DEFAULT_SMOOTHENING_RANGE, calc_ortho=False,
     ):
         # Used to fit the index data to the security data and extrapolate backwards
         # Creating security data that goes as far back as the index data
@@ -45,14 +47,11 @@ class Backtrace(Base):
 
         # Normalise y_old, t_old and y data:
         y_n_factor = max(y)
-        y_norm = y[:np.argmin(np.abs(t - t_old[-1]))+1] / y_n_factor
+        y_norm = y[:np.argmin(np.abs(t - short_t_old[-1]))+1] / y_n_factor
         y_old_n_factor = max(short_y_old)
         y_old_norm = short_y_old / y_old_n_factor
         t_old_n_factor = short_t_old[-1]
         t_old_norm = short_t_old / t_old_n_factor
-        
-        print(short_y_old, short_t_old, y_norm, t)
-        print(short_y_old.shape, short_t_old.shape, y_norm.shape, t.shape)
 
         # Create the input data
         comb_input = np.asarray([y_old_norm, t_old_norm])
@@ -150,28 +149,6 @@ class Backtrace(Base):
 
         results["Model type"] = model_type
 
-        # Evaluate the fitted model and create the new data curve
-        comb_input = np.asarray([y_old, t_old])
-        fitted_y = model(comb_input, *popt)
-        print(comb_input.shape)
-        print(fitted_y.shape)
-        new_y = np.append(fitted_y[:t_old_inception_idx], y)
-        new_t = np.append(t_old[1:t_old_inception_idx], t)
-        print(new_y.shape, new_t.shape)
-
-        # Define the new timestamps of the original (non-interpolated) data from the combined
-        # backtraced dataset
-        new_orig_t = np.append(
-            t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))],
-            t_orig
-        )
-
-        # Use interpolation to smooth the transition from the fitted old data to the new data
-        delete_indices = np.arange(-smth_index_rng, smth_index_rng + 1, 1) + t_old_inception_idx
-        gap_y = np.delete(new_y, delete_indices)
-        gap_t = np.delete(new_t, delete_indices)
-        smooth_y = PchipInterpolator(gap_t, gap_y)(new_t)
-
         # Calculate residuals:
         y_resid = infodict["fvec"] * y_n_factor
 
@@ -187,6 +164,42 @@ class Backtrace(Base):
         results["Durbin-Watson"] = np.sum((y_resid[1:] - y_resid[:-1]) ** 2) / np.sum(
             y_resid[:-1] ** 2
         )
+
+        fitting_failed = False
+
+        if results["Durbin-Watson"] < 0.1 or results["Durbin-Watson"] > 3.5 and results["R_adj^2"] < 0.93:
+            warn(
+                "The Durbin-Watson statistic is outside the range of 0.1 to 3.5 and "
+                + "The adjusted R-squared value is below 0.9, "
+                + "indicating potential autocorrelation in the residuals.\n"
+                "The index data backtracing will be discarded."
+            )
+            fitting_failed = True
+
+        if fitting_failed:
+            smooth_y = y
+            new_t = t
+            new_orig_t = t_orig
+        else:
+            # Evaluate the fitted model and create the new data curve
+            comb_input = np.asarray([y_old, t_old])
+            fitted_y = model(comb_input, *popt)
+
+            new_y = np.append(fitted_y[:t_old_inception_idx-1], y)
+            new_t = np.append(t_old[1:t_old_inception_idx], t)
+
+            # Define the new timestamps of the original (non-interpolated) data from the combined
+            # backtraced dataset
+            new_orig_t = np.append(
+                t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))],
+                t_orig
+            )
+
+            # Use interpolation to smooth the transition from the fitted old data to the new data
+            delete_indices = np.arange(-smth_index_rng, smth_index_rng + 1, 1) + t_old_inception_idx
+            gap_y = np.delete(new_y, delete_indices)
+            gap_t = np.delete(new_t, delete_indices)
+            smooth_y = PchipInterpolator(gap_t, gap_y)(new_t)
 
         # Calculate correlations:
         if model_type == "Osc":

@@ -17,7 +17,7 @@ class Security(Plotter, Backtrace):
     zero_point = 1952
 
     def __init__(
-        self, fpath, index_fpath=None, dist_fund=False, months=[], start_date=None, calc_ortho=True, calc_mat=True
+        self, fpath, index_fpath=None, dist_fund=False, months=[], start_date=None, calc_ortho=True, calc_mat=True, backtrace=True
     ):
         #
         # start_date: format is dd/mm/yyyy. Minimum is 02/01/1970
@@ -25,26 +25,29 @@ class Security(Plotter, Backtrace):
 
         self.__extract_security(fpath, dist_fund=dist_fund)
 
-        if index_fpath != None:
+        if index_fpath is not None and "Nothing" not in index_fpath:
             self.__extract_index(index_fpath)
 
             self.security_tick_time = self.tick_time.copy()
             self.security_return_series = self.return_series.copy()
 
-            self.return_series, self.tick_time, self.orig_tick_time, self.backtracing = self.backtrace_data(
-                y=self.return_series,
-                y_old=self.index_return_series,
-                t=self.tick_time,
-                t_old=self.index_tick_time,
-                t_orig=self.orig_tick_time,
-                t_orig_old=self.orig_index_tick_time,
-                calc_ortho=calc_ortho,
-            )
+            if backtrace:
+                self.return_series, self.tick_time, self.orig_tick_time, self.backtracing = self.backtrace_data(
+                    y=self.return_series,
+                    y_old=self.index_return_series,
+                    t=self.tick_time,
+                    t_old=self.index_tick_time,
+                    t_orig=self.orig_tick_time,
+                    t_orig_old=self.orig_index_tick_time,
+                    calc_ortho=calc_ortho,
+                )
+            else:
+                self.backtracing = []
         else:
             self.index_return_series = []
             self.index_tick_time = []
             self.orig_index_tick_time = []
-            self.backracing = []
+            self.backtracing = []
 
         self.save_security()
 
@@ -105,9 +108,29 @@ class Security(Plotter, Backtrace):
             self.orig_tick_time = self.orig_tick_time[numeric_entries][::-1]
             orig_return = np.asarray(orig_return[numeric_entries][::-1], dtype=float)
 
-            if dist_fund == True:
-                dividend_tick_time = self.convert_time(np.asarray(excel[4][0][1:]), time_form="iShares")
-                dividend_return = excel[4][2][1:]
+            ## Interpolate data to full dataset
+            # (interpolation is done so the return can be calculated on all data and sampling
+            # biases are removed)
+            self.tick_time = np.arange(self.orig_tick_time[0], self.orig_tick_time[-1]+1, 1, dtype=int)
+            # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
+            self.return_series = PchipInterpolator(self.orig_tick_time, orig_return)(self.tick_time)
+
+            if dist_fund:
+                dividend_sheet = excel[4]
+                dividend_headers = dividend_sheet.iloc[0].astype(str)
+
+                payable_col = np.where(dividend_headers.str.contains("Payable", case=False, na=False))[0]
+                total_col = np.where(dividend_headers.str.contains("Total", case=False, na=False))[0]
+
+                if len(payable_col) == 0:
+                    raise ValueError("Could not find a dividend 'Payable' column in the dividend sheet.")
+                if len(total_col) == 0:
+                    raise ValueError("Could not find a dividend 'Total' column in the dividend sheet.")
+
+                dividend_tick_time = self.convert_time(
+                    np.asarray(dividend_sheet.iloc[1:, int(payable_col[0])]), time_form="iShares"
+                )
+                dividend_return = dividend_sheet.iloc[1:, int(total_col[0])]
 
                 # Remove entries with '--' and reverse order (from start to now)
                 numeric_entries_div = ~dividend_return.str.contains("-", na=False)
@@ -118,26 +141,28 @@ class Security(Plotter, Backtrace):
                 nav = excel[2][2][1:]
                 nav = nav[numeric_entries][::-1]
 
+                nav = PchipInterpolator(self.orig_tick_time, nav)(self.tick_time)
+
                 # Align NAV values to the dividend dates in a vectorized way.
-                idx = np.searchsorted(self.orig_tick_time, dividend_tick_time)
+                idx = np.searchsorted(self.tick_time, dividend_tick_time)
 
                 # Check if the dividends do actually fall within the nav time-series (in principle
                 # it always should)
-                if idx[-1] >= len(self.orig_tick_time):
+                if idx[-1] >= len(self.tick_time):
                     idx = idx[:-1]
                     dividend_return = dividend_return[:-1]
 
-                if not np.all(self.orig_tick_time[idx] == dividend_tick_time):
+                if not np.all(self.tick_time[idx] == dividend_tick_time):
                     raise ValueError("Some dividend dates could not be matched to NAV dates.")
 
                 dividend_nav = np.asarray(nav[idx], dtype=float)
-                rel_dividend_return = dividend_return / dividend_nav
+                rel_dividend_return = 1 + dividend_return / dividend_nav
 
                 # Apply dividend effects to all subsequent returns in a vectorized way.
-                dividend_factors = np.ones(len(orig_return), dtype=float)
+                dividend_factors = np.ones(len(self.return_series), dtype=float)
                 dividend_factors[idx] = rel_dividend_return
                 dividend_factors = np.cumprod(dividend_factors)
-                orig_return = orig_return * dividend_factors
+                self.return_series *= dividend_factors
 
         elif fpath.find("iShares") != -1 and file_ext == ".xls":
             raise ValueError(
@@ -154,13 +179,6 @@ class Security(Plotter, Backtrace):
                 + "\n\nCurrently, the only supported files are: \n"
                 + "'iShares*.xls'\n'iShares*.xlsx'"
             )
-
-        ## Interpolate data to full dataset
-        # (interpolation is done so the return can be calculated on all data and sampling
-        # biases are removed)
-        self.tick_time = np.arange(self.orig_tick_time[0], self.orig_tick_time[-1]+1, 1, dtype=int)
-        # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
-        self.return_series = PchipInterpolator(self.orig_tick_time, orig_return)(self.tick_time)
 
         return
 
@@ -398,7 +416,7 @@ class Security(Plotter, Backtrace):
         if which == "all" or which == "historic":
 
             # Generate backtracing model data
-            if self.index_return_series is None:
+            if len(self.backtracing) == 0:
                 backtrace_factor_series = []
                 backtrace_series = []
             else:

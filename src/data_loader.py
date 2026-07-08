@@ -319,6 +319,8 @@ class DataLoader(Base):
             data={
                 "Timestamp": js["chart"]["result"][0]["timestamp"],
                 "Adj Close": js["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"],
+                "Currency": js["chart"]["result"][0]["meta"]["currency"],
+                "Symbol": js["chart"]["result"][0]["meta"]["symbol"],
             },
             dtype=float,
         )
