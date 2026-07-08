@@ -62,14 +62,35 @@ class Security(Plotter, Backtrace):
             else:
                 excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
 
-            self.name = excel[1][0][0]  # Name of the security
-            self.inception = excel[1][1][6]  # Inception data
-            self.inception_tick = self.convert_time(
-                np.asarray([self.inception]), time_form="iShares"
-            )[0]
-            self.type = excel[1][1][10]
-            self.benchmark = excel[1][1][11]
-            self.currency = excel[1][1][8]
+            sheet1 = excel[1]
+
+            # Name of the security (first row, first column)
+            self.name = sheet1.iloc[0, 0]
+
+            # Helper to find the first row in column 0 that contains a given label (case-insensitive)
+            def _find_row(label):
+                col0 = sheet1.iloc[:, 0].astype(str)
+                mask = col0.str.contains(label, case=False, na=False)
+                if not mask.any():
+                    raise ValueError(f"Could not find row containing '{label}' in column 0 of: {fpath}")
+                return int(np.where(mask.values)[0][0])
+
+            # Find inception date (first entry whose column-0 contains "Date")
+            row_date = _find_row("Date")
+            self.inception = sheet1.iloc[row_date, 1]
+            self.inception_tick = self.convert_time(np.asarray([self.inception]), time_form="iShares")[0]
+
+            # Find type (row where column-0 contains "Class")
+            row_type = _find_row("Class")
+            self.type = sheet1.iloc[row_type, 1]
+
+            # Find benchmark (row where column-0 contains "Benchmark")
+            row_benchmark = _find_row("Benchmark")
+            self.benchmark = sheet1.iloc[row_benchmark, 1]
+
+            # Find currency (row where column-0 contains "Base Currency")
+            row_currency = _find_row("Base Currency")
+            self.currency = sheet1.iloc[row_currency, 1]
 
             self.orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]), time_form="iShares")
             orig_return = excel[2][5][1:]
@@ -132,7 +153,7 @@ class Security(Plotter, Backtrace):
         ## Interpolate data to full dataset
         # (interpolation is done so the return can be calculated on all data and sampling
         # biases are removed)
-        self.tick_time = np.arange(self.orig_tick_time[0], self.orig_tick_time[-1], 1, dtype=int)
+        self.tick_time = np.arange(self.orig_tick_time[0], self.orig_tick_time[-1]+1, 1, dtype=int)
         # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
         self.return_series = PchipInterpolator(self.orig_tick_time, orig_return)(self.tick_time)
 
@@ -194,10 +215,15 @@ class Security(Plotter, Backtrace):
                 + "'*yahoo.csv'"
             )
 
+        # Remove NaNs
+        valid_entries = ~np.isnan(orig_return)
+        orig_return = orig_return[valid_entries]
+        self.orig_index_tick_time = self.orig_index_tick_time[valid_entries]
+
         ## Interpolate data to full dataset
         # (interpolation is done so the return can be calculated on all data and sampling
         # biases are removed)
-        self.index_tick_time = np.arange(self.orig_index_tick_time[0], self.orig_index_tick_time[-1], 1, dtype=int)
+        self.index_tick_time = np.arange(self.orig_index_tick_time[0], self.orig_index_tick_time[-1]+1, 1, dtype=int)
         # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
         self.index_return_series = PchipInterpolator(self.orig_index_tick_time, orig_return)(
             self.index_tick_time
@@ -335,29 +361,58 @@ class Security(Plotter, Backtrace):
 
         return rel_dy_mx
 
-    def plot_security(self, std_mult=[1, 2, 3], limit=2, time_index=-1):
-
-        # Calculate statistics
-        self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, self.months)
+    def plot_security(self, std_mult=[1, 2, 3], limit=2, time_index=-1, months=[], which="all"):
 
         # Convert starting tick to string:
-        tick_form_delta = int(self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares"))
+        tick_form_delta = self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares")[0]
         start_date = datetime.datetime.fromtimestamp(
             (self.start_tick - tick_form_delta) * 86400
         ).date()
 
-        # Generate plots
-        title = f"Return estimation from historic data ({start_date}+): {self.name}"
-        self.future_plot(
-            self.std_array,
-            self.std_err,
-            self.return_matrix * 100,
-            self.months,
-            title,
-            std_mult,
-            limit,
-            time_index=time_index,
-        )
+        if which == "all" or which == "future":
+            if len(months) == 0:
+                months = self.months
+
+            # Calculate statistics
+            self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, months)
+
+            # Generate Statistics and Future estimate plots
+            title = f"Return estimation from historic data ({start_date}+): {self.name}"
+            self.future_plot(
+                self.std_array,
+                self.std_err,
+                self.return_matrix * 100,
+                months,
+                title,
+                std_mult,
+                limit,
+                time_index=time_index,
+            )
+
+        if which == "all" or which == "historic":
+            # Generate backtracing model data
+            backtrace_factor_series = self.evaluate_bare_model(
+                self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
+            )
+            backtrace_series = self.evaluate_model(
+                self.index_return_series, self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
+            )
+
+            # Generate historic time series plot
+            title = f"Historic data ({start_date}+): {self.name}"
+            self.historic_plot(
+                return_series=self.return_series,
+                tick_time=self.tick_time,
+                orig_tick_time=self.orig_tick_time,
+                index_return_series=self.index_return_series,
+                index_tick_time=self.index_tick_time,
+                orig_index_tick_time=self.orig_index_tick_time,
+                security_start_tick=self.inception_tick,
+                backtrace_factor_series=backtrace_factor_series,
+                backtrace_series=backtrace_series,
+                backtrace_params=self.backtracing,
+                title_input=title,
+            )
 
         return
 

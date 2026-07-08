@@ -142,6 +142,8 @@ class Backtrace(Base):
         # The errors on the coefficients
         results["Param. err"] = np.sqrt(np.diag(pcov))
 
+        results["Model type"] = model_type
+
         # Evaluate the fitted model and create the new data curve
         comb_input = np.asarray([y_old, t_old])
         fitted_y = model(comb_input, *popt)
@@ -152,7 +154,7 @@ class Backtrace(Base):
         # Define the new timestamps of the original (non-interpolated) data from the combined
         # backtraced dataset
         new_orig_t = np.append(
-            t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))+1],
+            t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))],
             t_orig
         )
 
@@ -231,6 +233,24 @@ class Backtrace(Base):
 
         return smooth_y, new_t, new_orig_t, results
 
+    def evaluate_bare_model(self, t_old, popt, model_type="Osc"):
+        if model_type == "Osc":
+            y_model = self.bare_osc_backtrace_model(t_old, *popt[2:])
+        elif model_type == "Exp":
+            y_model = self.bare_exp_backtrace_model(t_old, *popt[2:])
+        return y_model
+
+    def evaluate_model(self, y_old, t_old, popt, model_type="Osc"):
+        if model_type == "Osc":
+            y_model = self.osc_backtrace_model(
+                np.asarray([y_old, t_old]), *popt
+            )
+        elif model_type == "Exp":
+            y_model = self.exp_backtrace_model(
+                np.asarray([y_old, t_old]), *popt
+            )
+        return y_model
+
     def exp_backtrace_model(self, x, a, b, exp_rat):
         # Define the function to be fitted:
         # Linear model that also includes the t-1 term, this incorporates lagging
@@ -248,6 +268,9 @@ class Backtrace(Base):
         # the exponential element and the lagging.
 
         return (a * x[0, 1:] + b * x[0, :-1]) * np.exp(exp_rat * x[1, 1:])
+
+    def bare_exp_backtrace_model(self, x, exp_rat):
+        return np.exp(exp_rat * x[1:])
 
     def osc_backtrace_model(self, x, a, b, amp_sin, phase, freq, exp_rat):
         # Define the function to be fitted:
@@ -275,6 +298,11 @@ class Backtrace(Base):
         return (a * x[0, 1:] + b * x[0, :-1]) * (
             np.exp(exp_rat * x[1, 1:])
             + amp_sin * np.sin(2 * np.pi * (freq * x[1, 1:] + (phase - freq * x[1, 1])))
+        )
+
+    def bare_osc_backtrace_model(self, x, amp_sin, phase, freq, exp_rat):
+        return np.exp(exp_rat * x[1:]) + amp_sin * np.sin(
+            2 * np.pi * (freq * x[1:] + (phase - freq * x[1]))
         )
 
     def exp_trig_ortho(self, R, phase, freq, a):
