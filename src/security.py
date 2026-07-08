@@ -40,6 +40,11 @@ class Security(Plotter, Backtrace):
                 t_orig_old=self.orig_index_tick_time,
                 calc_ortho=calc_ortho,
             )
+        else:
+            self.index_return_series = []
+            self.index_tick_time = []
+            self.orig_index_tick_time = []
+            self.backracing = []
 
         self.save_security()
 
@@ -266,7 +271,8 @@ class Security(Plotter, Backtrace):
             # Function calculating the number of ticks for a given year, multiple of groups of 4 years
             # (i.e. one loop of the leap-year cycle) plus the remaining non-leap years
             year_conv = lambda x, y_ind: (
-                ((int(x[y_ind:]) - self.zero_point) // 4) * 1461 + (int(x[y_ind:]) % 4) * 365
+                ((int(x[y_ind:]) - self.zero_point - 1) // 4) * 1461
+                + ((int(x[y_ind:]) - self.zero_point - 1) % 4) * 365
             )
 
             # Combining the functions above, to add the days, months and years and loop through all entries
@@ -390,13 +396,18 @@ class Security(Plotter, Backtrace):
             )
 
         if which == "all" or which == "historic":
+
             # Generate backtracing model data
-            backtrace_factor_series = self.evaluate_bare_model(
-                self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
-            )
-            backtrace_series = self.evaluate_model(
-                self.index_return_series, self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
-            )
+            if self.index_return_series is None:
+                backtrace_factor_series = []
+                backtrace_series = []
+            else:
+                backtrace_factor_series = self.evaluate_bare_model(
+                    self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
+                )
+                backtrace_series = self.evaluate_model(
+                    self.index_return_series, self.index_tick_time, self.backtracing["Parameters"], self.backtracing["Model type"]
+                )
 
             # Generate historic time series plot
             title = f"Historic data ({start_date}+): {self.name}"
