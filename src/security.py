@@ -50,6 +50,7 @@ class Security(Plotter, DataLoader, Backtrace):
                 t_orig=self.orig_tick_time,
                 t_orig_old=self.orig_index_tick_time,
                 calc_ortho=calc_ortho,
+                benchmark=self.benchmark
             )
         else:
             self.backtracing = []
@@ -69,8 +70,14 @@ class Security(Plotter, DataLoader, Backtrace):
 
         # Check the file type (data source -> determines how it should be handled)
         if fpath.find("iShares") != -1 and file_ext == ".xlsx":
+
+            file_name = os.path.basename(fpath).split('/')[-1]
+
             # Read the excel file:
-            if dist_fund == True:
+            if "ETC" in file_name and "ETF" not in file_name:
+                # It is an ETC (physical commodity) rather than equity/bond ETF
+                excel = pd.read_excel(fpath, sheet_name=[0, 1], header=None)
+            elif dist_fund == True:
                 excel = pd.read_excel(fpath, sheet_name=[1, 2, 4], header=None)
             else:
                 excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
@@ -274,7 +281,9 @@ class Security(Plotter, DataLoader, Backtrace):
             fx_timestamps = []
             fx_rate = []
 
-        if "GBP" not in self.index_currency:
+        has_index = hasattr(self, "index_currency")
+
+        if has_index and "GBP" not in self.index_currency:
             if self.currency == self.index_currency:
                 fx_index_timestamps = fx_timestamps.copy()
                 fx_index_rate = fx_rate.copy()
@@ -285,12 +294,6 @@ class Security(Plotter, DataLoader, Backtrace):
             index_conversion = False
             fx_index_timestamps = []
             fx_index_rate = []
-
-        print("Pre fx")
-        print(self.index_return_series, self.index_tick_time)
-        print(self.index_return_series.shape, self.index_tick_time.shape)
-        print(self.return_series, self.tick_time)
-        print(self.return_series.shape, self.tick_time.shape)
 
         if sec_conversion or index_conversion:
 
@@ -307,7 +310,7 @@ class Security(Plotter, DataLoader, Backtrace):
                 # Use a different end tick for the index in case it does not have as recent data as
                 # the security. This should not limit the main security time series.
                 index_end_tick = min(self.index_tick_time[-1], fx_index_timestamps[-1])
-            else:
+            elif has_index:
                 index_start_tick = self.index_tick_time[0]
                 index_end_tick = self.index_tick_time[-1]
 
@@ -323,17 +326,18 @@ class Security(Plotter, DataLoader, Backtrace):
                 start_tick=start_tick,
                 end_tick=end_tick,
             )
-            self.index_tick_time, self.index_return_series = self.__slice_by_ticks(
-                self.index_tick_time,
-                self.index_return_series,
-                start_tick=index_start_tick,
-                end_tick=index_end_tick,
-            )
-            self.orig_index_tick_time = self.__slice_by_ticks(
-                self.orig_index_tick_time,
-                start_tick=index_start_tick,
-                end_tick=index_end_tick,
-            )
+            if has_index:
+                self.index_tick_time, self.index_return_series = self.__slice_by_ticks(
+                    self.index_tick_time,
+                    self.index_return_series,
+                    start_tick=index_start_tick,
+                    end_tick=index_end_tick,
+                )
+                self.orig_index_tick_time = self.__slice_by_ticks(
+                    self.orig_index_tick_time,
+                    start_tick=index_start_tick,
+                    end_tick=index_end_tick,
+                )
 
             # Apply FX rates
             if sec_conversion:
@@ -369,12 +373,6 @@ class Security(Plotter, DataLoader, Backtrace):
                     )
 
                 self.index_return_series *= fx_index_rate
-
-        print("Post fx")
-        print(self.index_return_series, self.index_tick_time)
-        print(self.index_return_series.shape, self.index_tick_time.shape)
-        print(self.return_series, self.tick_time)
-        print(self.return_series.shape, self.tick_time.shape)
         return
 
     def __slice_by_ticks(self, *arrays, start_tick, end_tick):

@@ -182,6 +182,8 @@ class DataLoader(Base):
         timestamp = str(int(np.floor(current_time.timestamp())))
         urls = np.empty_like(url_templates)
         undownloadable_files = []
+        for i in range(len(url_templates)):
+            print(url_templates[i], filenames[i])
 
         for index, url_temp in enumerate(url_templates):
             if "finance.yahoo" in url_temp:
@@ -198,6 +200,7 @@ class DataLoader(Base):
                 undownloadable_files.append(index)
 
         urls = np.delete(urls, undownloadable_files)
+        valid_filenames = np.delete(filenames, undownloadable_files)
 
         if undownloadable_files:
             print(
@@ -206,7 +209,10 @@ class DataLoader(Base):
                 "Download these files manually."
             )
 
-        self.perform_download(urls, filenames, "Index files")
+        print("baaaaa\n")
+        for i in range(len(urls)):
+            print(urls[i], valid_filenames[i])
+        # self.perform_download(urls, valid_filenames, "Index files")
         return
 
     def download_fx(self, url_templates, filenames):

@@ -16,6 +16,7 @@ class Backtrace(Base):
     def backtrace_data(
         self, y, y_old, t, t_old, t_orig, t_orig_old,
         model_type="Osc", smth_index_rng=DEFAULT_SMOOTHENING_RANGE, calc_ortho=False,
+        benchmark=""
     ):
         # Used to fit the index data to the security data and extrapolate backwards
         # Creating security data that goes as far back as the index data
@@ -169,9 +170,10 @@ class Backtrace(Base):
 
         if results["Durbin-Watson"] < 0.1 or results["Durbin-Watson"] > 3.5 and results["R_adj^2"] < 0.93:
             warn(
+                f"For the security with benchmark {benchmark}:\n"
                 "The Durbin-Watson statistic is outside the range of 0.1 to 3.5 and "
-                + "The adjusted R-squared value is below 0.9, "
-                + "indicating potential autocorrelation in the residuals.\n"
+                "The adjusted R-squared value is below 0.9, "
+                "indicating potential autocorrelation in the residuals.\n"
                 "The index data backtracing will be discarded."
             )
             fitting_failed = True

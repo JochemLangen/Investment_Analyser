@@ -23,6 +23,7 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         start_date=None,
         load=False,
         overwrite_new_file_names=False,
+        fetch_data=None # Can be "All", "non-fx", "securities", "indices" or "fx"
     ):
 
         Plotter.__init__(self)
@@ -32,7 +33,9 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         valid_securities = self.dataframe["Name"].notnull()
 
         # Check whether all the data has been fetched:
-        if (
+        if fetch_data is not None:
+            self.fetch_data(which=fetch_data)
+        elif (
             self.dataframe["Index_loc"][valid_securities].isnull().values.any()
             or self.dataframe["Security_loc"][valid_securities].isnull().values.any()
         ):
@@ -44,8 +47,7 @@ class Portfolio(Plotter, DataLoader, Backtrace):
                 buttons=["Yes", "No"],
             )
             if answer == "Yes":
-                pass
-        self.fetch_data(which="indices")
+                self.fetch_data()
 
         # Load all the securities from the data folder into a dictionary
         self.securities = {}
