@@ -44,11 +44,16 @@ class Portfolio(Plotter, DataLoader, Backtrace):
                 buttons=["Yes", "No"],
             )
             if answer == "Yes":
-                self.fetch_data()
+                pass
+        self.fetch_data(which="indices")
 
         # Load all the securities from the data folder into a dictionary
         self.securities = {}
-        self.perform_task(self.dataframe["Name"][valid_securities], "load_securities", load)
+        self.perform_task(
+            self.dataframe["Name"][valid_securities], "load_securities",
+            load=load,
+            fx_df=self.dataframe[["Currency", "Currency_loc"]].dropna()
+        )
         security_names = list(self.securities.keys())
 
         if (
@@ -222,7 +227,7 @@ class Portfolio(Plotter, DataLoader, Backtrace):
         return
 
     ## Secondary functions:
-    def load_securities(self, security_name, load=False):
+    def load_securities(self, security_name, load=False, fx_df=None):
 
         index = self.dataframe["Name"][self.dataframe["Name"] == security_name].index[0]
         if self.dataframe["Used"][index] == 0:
@@ -243,9 +248,9 @@ class Portfolio(Plotter, DataLoader, Backtrace):
                     index_filepath = os.path.join(
                         self.folder, "..", "index", self.dataframe["Index_loc"][index]
                     )
-                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, calc_mat=False)
+                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False)
                 else:
-                    sec = Security(sec_filepath, dist_fund=dist_fund, calc_mat=False)
+                    sec = Security(sec_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False)
 
                 # Create the entry in the dataframe based on the security name directly, rather than its name
                 # in the Excel data sheet

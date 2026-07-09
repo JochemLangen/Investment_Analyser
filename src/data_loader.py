@@ -317,13 +317,23 @@ class DataLoader(Base):
 
         df = pd.DataFrame(
             data={
-                "Timestamp": js["chart"]["result"][0]["timestamp"],
-                "Adj Close": js["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"],
-                "Currency": js["chart"]["result"][0]["meta"]["currency"],
-                "Symbol": js["chart"]["result"][0]["meta"]["symbol"],
-            },
-            dtype=float,
+                "Timestamp": pd.to_numeric(
+                    js["chart"]["result"][0]["timestamp"], errors="coerce"
+                ),
+                "Adj Close": pd.to_numeric(
+                    js["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"],
+                    errors="coerce",
+                ),
+            }
         )
+        # Only set currency and symbol on the first row (leave other rows NaN)
+        if not df.empty:
+            df.at[0, "Currency"] = js["chart"]["result"][0]["meta"]["currency"]
+            df.at[0, "Symbol"] = js["chart"]["result"][0]["meta"]["symbol"]
+        else:
+            # fallback: create single-row dataframe with metadata
+            df["Currency"] = [js["chart"]["result"][0]["meta"]["currency"]]
+            df["Symbol"] = [js["chart"]["result"][0]["meta"]["symbol"]]
 
         df.to_csv(filename, index=False)
         return

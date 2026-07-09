@@ -41,8 +41,8 @@ class Backtrace(Base):
         t_old_inception_idx = np.argmin(np.abs(t_old - t[0]))
         t_old_end_idx = np.argmin(np.abs(t_old - t[-1]))
         y_len = t_old_end_idx - t_old_inception_idx # Note, y_old may have an earlier cut off date than y
-        short_y_old = y_old[t_old_inception_idx-1:t_old_end_idx+1]
-        short_t_old = t_old[t_old_inception_idx-1:t_old_end_idx+1]
+        short_y_old = y_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]
+        short_t_old = t_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]
 
 
         # Normalise y_old, t_old and y data:

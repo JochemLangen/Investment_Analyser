@@ -6,10 +6,11 @@ import numpy as np
 import pandas as pd
 from investment_analyser.backtrace import Backtrace
 from investment_analyser.plotter import Plotter
+from investment_analyser.data_loader import DataLoader
 from scipy.interpolate import PchipInterpolator
 
-
-class Security(Plotter, Backtrace):
+BASE_CURRENCY = "GBP"
+class Security(Plotter, DataLoader, Backtrace):
     script_location = os.path.realpath(__file__)
 
     # Zero point after which to start counting (at 1953 01 Jan, tick = 1)
@@ -17,36 +18,40 @@ class Security(Plotter, Backtrace):
     zero_point = 1952
 
     def __init__(
-        self, fpath, index_fpath=None, dist_fund=False, months=[], start_date=None, calc_ortho=True, calc_mat=True, backtrace=True
+        self, fpath, index_fpath=None, dist_fund=False, months=[],
+        fx_df=None, backtrace=True, calc_ortho=True,
+        start_date=None, calc_mat=True,
     ):
         #
         # start_date: format is dd/mm/yyyy. Minimum is 02/01/1970
         Plotter.__init__(self)
+        DataLoader.__init__(self)
 
         self.__extract_security(fpath, dist_fund=dist_fund)
 
         if index_fpath is not None and "Nothing" not in index_fpath:
             self.__extract_index(index_fpath)
-
-            self.security_tick_time = self.tick_time.copy()
-            self.security_return_series = self.return_series.copy()
-
-            if backtrace:
-                self.return_series, self.tick_time, self.orig_tick_time, self.backtracing = self.backtrace_data(
-                    y=self.return_series,
-                    y_old=self.index_return_series,
-                    t=self.tick_time,
-                    t_old=self.index_tick_time,
-                    t_orig=self.orig_tick_time,
-                    t_orig_old=self.orig_index_tick_time,
-                    calc_ortho=calc_ortho,
-                )
-            else:
-                self.backtracing = []
+            index_available = True
         else:
+            index_available = False
             self.index_return_series = []
             self.index_tick_time = []
             self.orig_index_tick_time = []
+
+        if fx_df is not None:
+            self.__apply_fx(fx_df)
+
+        if backtrace and index_available:
+            self.return_series, self.tick_time, self.orig_tick_time, self.backtracing = self.backtrace_data(
+                y=self.return_series,
+                y_old=self.index_return_series,
+                t=self.tick_time,
+                t_old=self.index_tick_time,
+                t_orig=self.orig_tick_time,
+                t_orig_old=self.orig_index_tick_time,
+                calc_ortho=calc_ortho,
+            )
+        else:
             self.backtracing = []
 
         self.save_security()
@@ -215,6 +220,8 @@ class Security(Plotter, Backtrace):
             # Extract return series
             orig_return = np.array(excel["Adj Close"][1:], dtype=float)
 
+            self.index_currency = excel["Currency"][0]
+
         elif fpath.find("MSCI") != -1 and file_ext == ".xlsx":
              # Read xlsx file
             excel = pd.read_excel(fpath)
@@ -227,6 +234,8 @@ class Security(Plotter, Backtrace):
 
             # Extract return series
             orig_return = np.array(excel["Unnamed: 1"][5:], dtype=float)
+
+            self.index_currency = excel["Unnamed: 1"][2]
         else:
             raise ValueError(
                 "The following data file has been found but is not supported: \n"
@@ -253,6 +262,165 @@ class Security(Plotter, Backtrace):
         )
 
         return
+
+    def __apply_fx(self, fx_df):
+
+        # Extract fx rates for security and index
+        if "GBP" not in self.currency:
+            fx_timestamps, fx_rate = self.__extract_fx(self.currency, fx_df)
+            sec_conversion = True
+        else:
+            sec_conversion = False
+            fx_timestamps = []
+            fx_rate = []
+
+        if "GBP" not in self.index_currency:
+            if self.currency == self.index_currency:
+                fx_index_timestamps = fx_timestamps.copy()
+                fx_index_rate = fx_rate.copy()
+            else:
+                fx_index_timestamps, fx_index_rate = self.__extract_fx(self.index_currency, fx_df)
+            index_conversion = True
+        else:
+            index_conversion = False
+            fx_index_timestamps = []
+            fx_index_rate = []
+
+        print("Pre fx")
+        print(self.index_return_series, self.index_tick_time)
+        print(self.index_return_series.shape, self.index_tick_time.shape)
+        print(self.return_series, self.tick_time)
+        print(self.return_series.shape, self.tick_time.shape)
+
+        if sec_conversion or index_conversion:
+
+            # Find the inner-most start and end tick
+            if sec_conversion:
+                start_tick = max(self.tick_time[0], fx_timestamps[0])
+                end_tick = min(self.tick_time[-1], fx_timestamps[-1])
+            else:
+                start_tick = self.tick_time[0]
+                end_tick = self.tick_time[-1]
+
+            if index_conversion:
+                index_start_tick = max(self.index_tick_time[0], fx_index_timestamps[0])
+                # Use a different end tick for the index in case it does not have as recent data as
+                # the security. This should not limit the main security time series.
+                index_end_tick = min(self.index_tick_time[-1], fx_index_timestamps[-1])
+            else:
+                index_start_tick = self.index_tick_time[0]
+                index_end_tick = self.index_tick_time[-1]
+
+            # Limit series by the new start and end date for which there is data
+            self.tick_time, self.return_series = self.__slice_by_ticks(
+                self.tick_time,
+                self.return_series,
+                start_tick=start_tick,
+                end_tick=end_tick,
+            )
+            self.orig_tick_time = self.__slice_by_ticks(
+                self.orig_tick_time,
+                start_tick=start_tick,
+                end_tick=end_tick,
+            )
+            self.index_tick_time, self.index_return_series = self.__slice_by_ticks(
+                self.index_tick_time,
+                self.index_return_series,
+                start_tick=index_start_tick,
+                end_tick=index_end_tick,
+            )
+            self.orig_index_tick_time = self.__slice_by_ticks(
+                self.orig_index_tick_time,
+                start_tick=index_start_tick,
+                end_tick=index_end_tick,
+            )
+
+            # Apply FX rates
+            if sec_conversion:
+                fx_timestamps, fx_rate = self.__slice_by_ticks(
+                    fx_timestamps,
+                    fx_rate,
+                    start_tick=start_tick,
+                    end_tick=end_tick,
+                )
+
+                # Assumes there are ticks for all days within the time limits
+                if len(fx_rate) != len(self.return_series):
+                    raise ValueError(
+                        "There are gaps in the timeseries of either the fx rate or return series,"
+                        " despite the fact that they have both been interpolated.\n"
+                        f"Length fx_rate: {len(fx_rate)}. Length return_series: {len(self.return_series)}"
+                    )
+                self.return_series *= fx_rate
+
+            if index_conversion:
+                fx_index_timestamps, fx_index_rate = self.__slice_by_ticks(
+                    fx_index_timestamps,
+                    fx_index_rate,
+                    start_tick=index_start_tick,
+                    end_tick=index_end_tick,
+                )
+
+                if len(fx_index_rate) != len(self.index_return_series):
+                    raise ValueError(
+                        "There are gaps in the timeseries of either the fx rate or return series,"
+                        " despite the fact that they have both been interpolated.\n"
+                        f"Length fx_index_rate: {len(fx_index_rate)}. Length index_return_series: {len(self.index_return_series)}"
+                    )
+
+                self.index_return_series *= fx_index_rate
+
+        print("Post fx")
+        print(self.index_return_series, self.index_tick_time)
+        print(self.index_return_series.shape, self.index_tick_time.shape)
+        print(self.return_series, self.tick_time)
+        print(self.return_series.shape, self.tick_time.shape)
+        return
+
+    def __slice_by_ticks(self, *arrays, start_tick, end_tick):
+        if len(arrays) not in {1, 2}:
+            raise ValueError("Expected one or two arrays to slice.")
+
+        mask = (arrays[0] >= start_tick) & (arrays[0] <= end_tick)
+
+        if len(arrays) == 1:
+            return arrays[0][mask]
+
+        return tuple(arr[mask] for arr in arrays)
+
+    def __extract_fx(self, currency, fx_df):
+
+        fx = BASE_CURRENCY + "-" + currency
+
+        currency_fpath = fx_df["Currency_loc"][fx_df["Currency"] == fx].iloc[0]
+
+        fpath = os.path.realpath(
+            os.path.join(self.folder, "..", "fx", currency_fpath)
+        )
+
+        excel = pd.read_csv(fpath, header=None)
+
+        # Extract the date at the end of the line (e.g. '02 Jul 26') using regex
+        date_str = excel[0].astype(str).str.extract(r'(\d{1,2}\s+\w+\s+\d{2})$')[0]
+
+        # Drop header/empty rows and strip whitespace
+        date_str = date_str.dropna().str.strip()
+
+        # Parse with day-first two-digit year
+        timestamps = pd.to_datetime(date_str, format="%d %b %y", dayfirst=True, errors="coerce").apply(lambda x: x.timestamp())
+
+        orig_fx_timestamps = self.convert_time(np.array(timestamps), time_form="Generic")[::-1]
+
+        # The BoE rates are listed as GBP to something else, but we want it the other way round.
+        orig_fx_rate = 1 / np.asarray(excel[1][1:], dtype=float)[::-1]
+
+        fx_timestamps = np.arange(orig_fx_timestamps[0], orig_fx_timestamps[-1]+1, 1, dtype=int)
+        # Perform interpolation (pchip is used for most accurate interpolation, without overshooting)
+        fx_rate = PchipInterpolator(orig_fx_timestamps, orig_fx_rate)(
+            fx_timestamps
+        )
+        return fx_timestamps, fx_rate
+
 
     def convert_time(self, time_array, time_form="iShares"):
         # time_array needs to be a numpy array
@@ -401,7 +569,7 @@ class Security(Plotter, Backtrace):
             self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, months)
 
             # Generate Statistics and Future estimate plots
-            title = f"Return estimation from historic data ({start_date}+): {self.name}"
+            title = f"Return estimation based on historic data in {BASE_CURRENCY} ({start_date}+): {self.name}"
             self.future_plot(
                 self.std_array,
                 self.std_err,
@@ -428,7 +596,7 @@ class Security(Plotter, Backtrace):
                 )
 
             # Generate historic time series plot
-            title = f"Historic data ({start_date}+): {self.name}"
+            title = f"Historic return data in {BASE_CURRENCY} ({start_date}+): {self.name}"
             self.historic_plot(
                 return_series=self.return_series,
                 tick_time=self.tick_time,
