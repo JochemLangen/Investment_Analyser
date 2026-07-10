@@ -21,12 +21,6 @@ class Backtrace(Base):
         # Used to fit the index data to the security data and extrapolate backwards
         # Creating security data that goes as far back as the index data
 
-        if len(y_old) < len(y):
-            # Inputs had been provided the wrong way round!
-            tmp = y
-            y = y_old.copy()
-            y_old = tmp.copy()
-
         # Make the time direction consistent (past to present)
         if t_old[-1] < t_old[0]:
             sort_old = np.argsort(t_old)
@@ -43,8 +37,7 @@ class Backtrace(Base):
         t_old_end_idx = np.argmin(np.abs(t_old - t[-1]))
         y_len = t_old_end_idx - t_old_inception_idx # Note, y_old may have an earlier cut off date than y
         short_y_old = y_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]
-        short_t_old = t_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]
-
+        short_t_old = t_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]        
 
         # Normalise y_old, t_old and y data:
         y_n_factor = max(y)

@@ -20,14 +20,14 @@ class Security(Plotter, DataLoader, Backtrace):
     def __init__(
         self, fpath, index_fpath=None, dist_fund=False, months=[],
         fx_df=None, backtrace=True, calc_ortho=True,
-        start_date=None, calc_mat=True,
+        start_date=None, calc_mat=True, name=None,
     ):
         #
         # start_date: format is dd/mm/yyyy. Minimum is 02/01/1970
         Plotter.__init__(self)
         DataLoader.__init__(self)
 
-        self.__extract_security(fpath, dist_fund=dist_fund)
+        self.__extract_security(fpath, dist_fund=dist_fund, name=name)
 
         if index_fpath is not None and "Nothing" not in index_fpath:
             self.__extract_index(index_fpath)
@@ -55,21 +55,24 @@ class Security(Plotter, DataLoader, Backtrace):
         else:
             self.backtracing = []
 
+        self.start_tick, self.tick_time, self.return_series = self._set_start_tick(start_date)
+        self.months, _ = self.generate_intervals(months=months)
+
         self.save_security()
 
         if calc_mat == True:
-            self.return_matrix = self.calc_return_matrix(months, start_date)
+            self.return_matrix = self.calc_return_matrix(self.months, start_date)
 
         return
 
-    def __extract_security(self, fpath, dist_fund=False):
+    def __extract_security(self, fpath, dist_fund=False, name=None):
 
         ## Extract the data
         # Extract the file extension
         file_ext = os.path.splitext(fpath)[1]
 
         # Check the file type (data source -> determines how it should be handled)
-        if fpath.find("iShares") != -1 and file_ext == ".xlsx":
+        if (fpath.find("iShares") != -1 or fpath.find("STOXX") != -1) and file_ext == ".xlsx":
 
             file_name = os.path.basename(fpath).split('/')[-1]
 
@@ -77,23 +80,37 @@ class Security(Plotter, DataLoader, Backtrace):
             if "ETC" in file_name and "ETF" not in file_name:
                 # It is an ETC (physical commodity) rather than equity/bond ETF
                 excel = pd.read_excel(fpath, sheet_name=[0, 1], header=None)
-            elif dist_fund == True:
-                excel = pd.read_excel(fpath, sheet_name=[1, 2, 4], header=None)
-            else:
-                excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
 
-            sheet1 = excel[1]
+                sheet1 = excel[0]
+                sheet2 = excel[1]
+            else:
+                if dist_fund == True:
+                    excel = pd.read_excel(fpath, sheet_name=[1, 2, 4], header=None)
+                else:
+                    excel = pd.read_excel(fpath, sheet_name=[1, 2], header=None)
+
+                sheet1 = excel[1]
+                sheet2 = excel[2]
 
             # Name of the security (first row, first column)
-            self.name = sheet1.iloc[0, 0]
+            if name is None:
+                self.name = sheet1.iloc[0, 0]
+            else:
+                self.name = name
 
             # Helper to find the first row in column 0 that contains a given label (case-insensitive)
-            def _find_row(label):
+            def _find_row(label: str | list[str]):
                 col0 = sheet1.iloc[:, 0].astype(str)
-                mask = col0.str.contains(label, case=False, na=False)
-                if not mask.any():
-                    raise ValueError(f"Could not find row containing '{label}' in column 0 of: {fpath}")
-                return int(np.where(mask.values)[0][0])
+                labels = [label] if isinstance(label, str) else label
+
+                for candidate in labels:
+                    mask = col0.str.contains(candidate, case=False, na=False)
+                    if mask.any():
+                        return int(np.where(mask.values)[0][0])
+
+                raise ValueError(
+                    f"Could not find row containing any of {labels} in column 0 of: {fpath}"
+                )
 
             # Find inception date (first entry whose column-0 contains "Date")
             row_date = _find_row("Date")
@@ -105,19 +122,19 @@ class Security(Plotter, DataLoader, Backtrace):
             self.type = sheet1.iloc[row_type, 1]
 
             # Find benchmark (row where column-0 contains "Benchmark")
-            row_benchmark = _find_row("Benchmark")
+            row_benchmark = _find_row(["Benchmark", "Index"])
             self.benchmark = sheet1.iloc[row_benchmark, 1]
 
             # Find currency (row where column-0 contains "Base Currency")
             row_currency = _find_row("Base Currency")
             self.currency = sheet1.iloc[row_currency, 1]
 
-            self.orig_tick_time = self.convert_time(np.asarray(excel[2][0][1:]), time_form="iShares")
-            orig_return = excel[2][5][1:]
+            orig_ticks = self.convert_time(np.asarray(sheet2[0][1:]), time_form="iShares")
+            orig_return = sheet2[5][1:]
 
             # Remove entries with '--' and reverse order (from start to now)
             numeric_entries = ~orig_return.str.contains("-", na=False)
-            self.orig_tick_time = self.orig_tick_time[numeric_entries][::-1]
+            self.orig_tick_time = orig_ticks[numeric_entries][::-1]
             orig_return = np.asarray(orig_return[numeric_entries][::-1], dtype=float)
 
             ## Interpolate data to full dataset
@@ -147,13 +164,19 @@ class Security(Plotter, DataLoader, Backtrace):
                 # Remove entries with '--' and reverse order (from start to now)
                 numeric_entries_div = ~dividend_return.str.contains("-", na=False)
                 dividend_tick_time = dividend_tick_time[numeric_entries_div][::-1]
-                dividend_return = np.asarray(dividend_return[numeric_entries_div][::-1], dtype=float)
+                valid_dividends = dividend_tick_time <= self.tick_time[-1]
+                dividend_tick_time = dividend_tick_time[valid_dividends]
+
+                dividend_return = np.asarray(dividend_return[numeric_entries_div][::-1][valid_dividends], dtype=float)
 
                 # Extract per security NAV in security currency
-                nav = excel[2][2][1:]
-                nav = nav[numeric_entries][::-1]
+                nav = sheet2[2][1:]
 
-                nav = PchipInterpolator(self.orig_tick_time, nav)(self.tick_time)
+                numeric_entries_nav = ~nav.str.contains("-", na=False)
+                nav = nav[numeric_entries_nav][::-1]
+                orig_nav_ticks = orig_ticks[numeric_entries_nav][::-1]
+
+                nav = PchipInterpolator(orig_nav_ticks, nav)(self.tick_time)
 
                 # Align NAV values to the dividend dates in a vectorized way.
                 idx = np.searchsorted(self.tick_time, dividend_tick_time)
@@ -164,7 +187,10 @@ class Security(Plotter, DataLoader, Backtrace):
                     idx = idx[:-1]
                     dividend_return = dividend_return[:-1]
 
-                if not np.all(self.tick_time[idx] == dividend_tick_time):
+                if (
+                    (not len(self.tick_time[idx]) == len(dividend_tick_time)) or
+                    (not np.all(self.tick_time[idx] == dividend_tick_time))
+                ):
                     raise ValueError("Some dividend dates could not be matched to NAV dates.")
 
                 dividend_nav = np.asarray(nav[idx], dtype=float)
@@ -176,7 +202,7 @@ class Security(Plotter, DataLoader, Backtrace):
                 dividend_factors = np.cumprod(dividend_factors)
                 self.return_series *= dividend_factors
 
-        elif fpath.find("iShares") != -1 and file_ext == ".xls":
+        elif (fpath.find("iShares") != -1 or fpath.find("STOXX") != -1) and file_ext == ".xls":
             raise ValueError(
                 "The .xls file should be converted to a .xlsx file first. \n"
                 + "Use the data loader to do this."
@@ -207,7 +233,7 @@ class Security(Plotter, DataLoader, Backtrace):
 
             if "Date" in excel.columns:  # Old format, with download API:
                 # Extract time
-                datetime_series = pd.to_datetime(excel["Date"][1:], format="%d/%m/%Y")
+                datetime_series = pd.to_datetime(excel["Date"][1:], format="%df/%m/%Y")
 
                 timestamps = datetime_series.apply(lambda x: x.timestamp())
             elif "Timestamp" in excel.columns:  # New format from json data in chart
@@ -258,6 +284,12 @@ class Security(Plotter, DataLoader, Backtrace):
         valid_entries = ~np.isnan(orig_return)
         orig_return = orig_return[valid_entries]
         self.orig_index_tick_time = self.orig_index_tick_time[valid_entries]
+
+        file_name = os.path.basename(fpath).split('/')[-1]
+        if "Gold" in file_name:
+            index = np.argmin(np.abs(self.orig_index_tick_time - 22720))
+            orig_return = orig_return[:index]
+            self.orig_index_tick_time = self.orig_index_tick_time[:index]
 
         ## Interpolate data to full dataset
         # (interpolation is done so the return can be calculated on all data and sampling
@@ -490,46 +522,32 @@ class Security(Plotter, DataLoader, Backtrace):
 
         # Set a default array with the month intervals to use
         if np.shape(months)[0] == 0:
-            yrs = 10
-            self.months = np.append(
-                np.arange(1, 12, 2, dtype=int), np.arange(12, yrs * 12, 8, dtype=int)
+            yrs = 7
+            months = np.append(
+                np.arange(6, 12, 2, dtype=int), np.arange(12, yrs * 12, 8, dtype=int)
             )
-        else:
-            self.months = months
+
+        month_ticks = np.asarray(months * 365.25 / 12, dtype=int)
+
+        valid_months = month_ticks < (self.tick_time[-1] - self.tick_time[0])
+        month_ticks = month_ticks[valid_months]
+        months = months[valid_months]
 
         # Return the calculated intervals, using the average month length in a year
-        return np.asarray(self.months * 365.25 / 12, dtype=int)
+        return months, month_ticks
 
     def calc_return_matrix(self, months, start_date=None):
 
-        t_int = self.generate_intervals(months)
+        self.months, t_int = self.generate_intervals(months)
 
-        # Set the data start date:
-        if start_date == None:
-            self.start_tick = self.tick_time[0]
-        else:
-            # Convert string format start_date to tick with the zero_point
-            tick_form_delta = self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares")
-            self.start_tick = int(
-                np.floor(
-                    (datetime.datetime.strptime(start_date + " 01", "%d/%m/%Y %H").timestamp())
-                    / 86400
-                )
-                + tick_form_delta
-            )
-            # Note, the hour needed to be added because of the timestamp datetime generates for a simple date
-
-            # Slice the arrays to use the start_index
-            start_index = np.argmin(abs(self.tick_time - self.start_tick))
-            self.tick_time = self.tick_time[start_index:]
-            self.return_series = self.return_series[start_index:]
+        _, tick_time, return_series = self._set_start_tick(start_date)
 
         int_len = len(t_int)
-        t_len = len(self.tick_time)
+        t_len = len(tick_time)
 
         # Extract indices from the ticks:
         indices = (
-            self.tick_time - self.tick_time[0]
+            tick_time - tick_time[0]
         )  # As all points are a full set of integers from the start date to now
         index_mx = np.tile(indices, (int_len, 1))  # Convert into matrix
         index_mx += np.tile(t_int, (t_len, 1)).T  # Add time intervals to matrix
@@ -541,27 +559,54 @@ class Security(Plotter, DataLoader, Backtrace):
         index_mx[mask] = 0
 
         # Creating the y matrix based on the index matrix
-        y_mx = self.return_series[index_mx]
+        y_mx = return_series[index_mx]
         y_mx[mask] = np.nan
 
         # Calculate the deltas (the returns)
-        y_mat = np.tile(self.return_series, (int_len, 1))
+        y_mat = np.tile(return_series, (int_len, 1))
         dy_mx = y_mx - y_mat
         rel_dy_mx = dy_mx / y_mat
 
         return rel_dy_mx
+
+    def _set_start_tick(self, start_date=None):
+        # Set the data start date:
+        if start_date == None:
+            start_tick = self.tick_time[0]
+            tick_time = self.tick_time.copy()
+            return_series = self.return_series.copy()
+        else:
+            # Convert string format start_date to tick with the zero_point
+            tick_form_delta = self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares")
+            start_tick = int(
+                np.floor(
+                    (datetime.datetime.strptime(start_date + " 01", "%d/%m/%Y %H").timestamp())
+                    / 86400
+                )
+                + tick_form_delta
+            )
+            # Note, the hour needed to be added because of the timestamp datetime generates for a simple date
+
+            # Slice the arrays to use the start_index
+            start_index = np.argmin(abs(self.tick_time - start_tick))
+            tick_time = self.tick_time[start_index:]
+            return_series = self.return_series[start_index:]
+        return start_tick, tick_time, return_series
 
     def plot_security(self, std_mult=[1, 2, 3], limit=2, time_index=-1, months=[], which="all"):
 
         # Convert starting tick to string:
         tick_form_delta = self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares")[0]
         start_date = datetime.datetime.fromtimestamp(
-            (self.start_tick - tick_form_delta) * 86400
+            (self.tick_time[0] - tick_form_delta) * 86400
         ).date()
 
         if which == "all" or which == "future":
             if len(months) == 0:
                 months = self.months
+
+            if not hasattr(self, "return_matrix"):
+                self.return_matrix = self.calc_return_matrix(months)
 
             # Calculate statistics
             self.std_array, self.std_err = self.calc_std_1D(self.return_matrix, months)

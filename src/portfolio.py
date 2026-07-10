@@ -11,7 +11,7 @@ from investment_analyser.plotter import Plotter
 from investment_analyser.security import Security
 
 
-class Portfolio(Plotter, DataLoader, Backtrace):
+class Portfolio(Security, Plotter, DataLoader, Backtrace):
     script_location = os.path.realpath(__file__)
 
     def __init__(
@@ -250,9 +250,9 @@ class Portfolio(Plotter, DataLoader, Backtrace):
                     index_filepath = os.path.join(
                         self.folder, "..", "index", self.dataframe["Index_loc"][index]
                     )
-                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False)
+                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False, name=security_name)
                 else:
-                    sec = Security(sec_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False)
+                    sec = Security(sec_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False, name=security_name)
 
                 # Create the entry in the dataframe based on the security name directly, rather than its name
                 # in the Excel data sheet

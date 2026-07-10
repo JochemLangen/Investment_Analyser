@@ -10,38 +10,86 @@ class Stats(Base):
         return
 
     def calc_std_1D(self, y_mx, time, axis=1):
+        """Calculate statistics for a 1D return matrix.
+
+        Parameters
+        ----------
+        y_mx : array_like
+            2D matrix of returns expressed as fractions; multiplied by 100 internally.
+        time : array_like
+            Time intervals used for annualisation.
+        axis : int, default 1
+            Axis along which to calculate statistics.
+
+        Returns
+        -------
+        std_array : ndarray, shape (n_periods, 8)
+            Columns contain:
+            0: mean
+            1: std
+            2: downside semistd (multiplied by 2 to be the same magnitude as regular std)
+            3: upside semistd (*)
+            4: annualised mean
+            5: annualised std
+            6: annualised downside semistd (*)
+            7: annualised upside semistd (*)
+        std_err : ndarray, shape (n_periods, 8)
+            Standard error / uncertainty for corresponding std_array columns.
+        """
         # Only 2D (matrix) is supported
         # Make sure y_mx is numpy array and turn into percentile data
         y_mx = np.asarray(y_mx) * 100
 
         # Set up STD matrix, mean and std
         other_axis = (axis - 1) % 2
-        std_array = np.empty((np.shape(y_mx)[other_axis], 4))
+        std_array = np.empty((np.shape(y_mx)[other_axis], 8))
 
         # STD error array, SE and uncertainty in std
         std_err = std_array.copy()
 
         # Calculate the std array:
-        std_array[:, 0] = np.nanmean(y_mx, axis=axis)
+        mean = np.nanmean(y_mx, axis=axis)
+        std_array[:, 0] = mean
         std_array[:, 1] = np.nanstd(y_mx, axis=axis, ddof=1)
+
+        n_elem = np.shape(y_mx)[axis]
+
+        # Calculate the downside and upside semivariance
+        mean_expanded = np.expand_dims(mean, axis=axis)
+        downside_var = 2 * np.nanmean(np.square(np.maximum(0, mean_expanded - y_mx)), axis=axis) * n_elem / (n_elem - 1)
+        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_mx - mean_expanded)), axis=axis) * n_elem / (n_elem - 1)
+        std_array[:, 2] = np.sqrt(downside_var)
+        std_array[:, 3] = np.sqrt(upside_var)
 
         # Calculate the length of each population data (i.e. non-nan values)
         valid_entries = np.sum(~np.isnan(y_mx), axis=axis)
 
-        # Calcualte the uncertainty on the mean and standard deviation
+        # Calcualte the uncertainty on the stds
         std_err[:, 0] = std_array[:, 1] / np.sqrt(valid_entries)  # STD/sqrt(n)
         std_err[:, 1] = std_array[:, 1] / np.sqrt(2 * valid_entries - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 2] = std_array[:, 2] / np.sqrt(2 * valid_entries - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * valid_entries - 2)  # semistd/sqrt(2*n -2)
 
         ## Calculate annualised returns
         annualised_y_mx = self.__annualise(time, y_mx)[0, :, :]
 
         # Calculate avg and std on annualised y_mx
-        std_array[:, 2] = np.nanmean(annualised_y_mx, axis=axis)
-        std_array[:, 3] = np.nanstd(annualised_y_mx, axis=axis, ddof=1)
+        annual_mean = np.nanmean(annualised_y_mx, axis=axis)
+        std_array[:, 4] = annual_mean
+        std_array[:, 5] = np.nanstd(annualised_y_mx, axis=axis, ddof=1)
+
+        # Calculate the downside and upside semivariance for annualised returns
+        annual_mean_expanded = np.expand_dims(annual_mean, axis=axis)
+        annual_downside_var = 2 * np.nanmean(np.square(np.maximum(0, annual_mean_expanded - annualised_y_mx)), axis=axis) * n_elem / (n_elem - 1)
+        annual_upside_var = 2 * np.nanmean(np.square(np.maximum(0, annualised_y_mx - annual_mean_expanded)), axis=axis) * n_elem / (n_elem - 1)
+        std_array[:, 6] = np.sqrt(annual_downside_var)
+        std_array[:, 7] = np.sqrt(annual_upside_var)
 
         # Calcualte the uncertainty on the mean and standard deviation
-        std_err[:, 2] = std_array[:, 3] / np.sqrt(valid_entries)  # STD/sqrt(n)
-        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * valid_entries - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 4] = std_array[:, 5] / np.sqrt(valid_entries)  # STD/sqrt(n)
+        std_err[:, 5] = std_array[:, 5] / np.sqrt(2 * valid_entries - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 6] = std_array[:, 6] / np.sqrt(2 * valid_entries - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 7] = std_array[:, 7] / np.sqrt(2 * valid_entries - 2)  # semistd/sqrt(2*n -2)
 
         return std_array, std_err
 
@@ -63,11 +111,11 @@ class Stats(Base):
         ## Calculate annualised covariance matrix
         annualised_y_mat = self.__annualise(time, *y_mat)
 
-        ann_results_tens = self.__calc_cov(*annualised_y_mat)[0]
+        ann_results_tens, ann_y_tens, _ = self.__calc_cov(*annualised_y_mat)
 
         # Combine the covariance matrix data to find the mean and std for each time interval point
         std_array, std_err, return_series = self.__comb_std(
-            results_tens, ann_results_tens, y_tens, N, coeff, *coeffs
+            results_tens, ann_results_tens, y_tens, ann_y_tens, N, coeff, *coeffs
         )
 
         return std_array, std_err, return_series
@@ -109,10 +157,49 @@ class Stats(Base):
 
         return results_tens, y_tens, N
 
-    def __comb_std(self, cov_tens, ann_cov_tens, y_tens, N, coeff, *args):
+    def __comb_std(self, cov_tens, ann_cov_tens, y_tens, ann_y_tens, N, coeff, *args):
+        """Combine covariance results into portfolio statistics.
+
+        Parameters
+        ----------
+        cov_tens : ndarray
+            Covariance tensor for raw returns.
+        ann_cov_tens : ndarray
+            Covariance tensor for annualised returns.
+        y_tens : ndarray
+            Stacked return matrices for the raw returns.
+        ann_y_tens : ndarray
+            Stacked return matrices for the annualised returns.
+        N : ndarray
+            Count of non-NaN observations used for standard error calculation.
+        coeff : float
+            First coefficient used to combine return series.
+        *args : float
+            Additional coefficients for combination.
+
+        Returns
+        -------
+        std_array : ndarray, shape (n_periods, 8)
+            Columns contain:
+            0: combined mean
+            1: combined std
+            2: combined downside semistd (multiplied by 2 to be the same magnitude as regular std)
+            3: combined upside semistd (*)
+            4: combined annualised mean
+            5: combined annualised std
+            6: combined annualised downside semistd (*)
+            7: combined annualised upside semistd (*)
+        std_err : ndarray, shape (n_periods, 8)
+            Standard error / uncertainty for corresponding std_array columns.
+        y_series_mat : ndarray
+            Combined return series from the weighted raw returns.
+
+
+        Note: Calculation of semistd should be checked!
+        """
 
         # Set up STD matrix, mean and std
-        std_array = np.empty((np.shape(cov_tens)[0], 4))
+        std_array = np.empty((np.shape(cov_tens)[0], 8))
 
         # STD error array, SE and uncertainty in std
         std_err = std_array.copy()
@@ -131,22 +218,43 @@ class Stats(Base):
         w_cov_tens = cov_tens[:, 1:, :] * coeff_sqrd
         std_array[:, 1] = np.sqrt(np.sum(w_cov_tens, axis=(1, 2)))
 
+        # Calculate the downside and upside semivariance for the combined portfolio
+        y_series_mat = np.sum(y_tens * coeff_mat, axis=2)
+
+        n_elem = np.shape(y_series_mat)[1]
+        combined_mean = np.nanmean(y_series_mat, axis=1)
+        mean_expanded = np.expand_dims(combined_mean, axis=1)
+        downside_var = 2 * np.nanmean(np.square(np.maximum(0, mean_expanded - y_series_mat)), axis=1) * n_elem / (n_elem - 1)
+        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_series_mat - mean_expanded)), axis=1) * n_elem / (n_elem - 1)
+        std_array[:, 2] = np.sqrt(downside_var)
+        std_array[:, 3] = np.sqrt(upside_var)
+
         # Calcualte the uncertainty on the mean and standard deviation
         std_err[:, 0] = std_array[:, 1] / np.sqrt(N[:, 0, 0])  # STD/sqrt(n)
         std_err[:, 1] = std_array[:, 1] / np.sqrt(2 * N[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 2] = std_array[:, 2] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
 
         ## Calculate annualised std array:
-        std_array[:, 2] = np.sum(ann_cov_tens[:, 0, :] * coeff_mat, axis=1)
+        std_array[:, 4] = np.sum(ann_cov_tens[:, 0, :] * coeff_mat, axis=1)
 
         w_ann_cov_tens = ann_cov_tens[:, 1:, :] * coeff_sqrd
-        std_array[:, 3] = np.sqrt(np.sum(w_ann_cov_tens, axis=(1, 2)))
+        std_array[:, 5] = np.sqrt(np.sum(w_ann_cov_tens, axis=(1, 2)))
+
+        # Calculate the downside and upside semivariance for the annualised combined portfolio
+        ann_y_series_mat = np.sum(ann_y_tens * coeff_mat, axis=2)
+        ann_combined_mean = np.nanmean(ann_y_series_mat, axis=1)
+        ann_mean_expanded = np.expand_dims(ann_combined_mean, axis=1)
+        ann_downside_var = 2 * np.nanmean(np.square(np.maximum(0, ann_mean_expanded - ann_y_series_mat)), axis=1) * n_elem / (n_elem - 1)
+        ann_upside_var = 2 * np.nanmean(np.square(np.maximum(0, ann_y_series_mat - ann_mean_expanded)), axis=1) * n_elem / (n_elem - 1)
+        std_array[:, 6] = np.sqrt(ann_downside_var)
+        std_array[:, 7] = np.sqrt(ann_upside_var)
 
         # Calcualte the uncertainty on the mean and standard deviation
-        std_err[:, 2] = std_array[:, 3] / np.sqrt(N[:, 0, 0])  # STD/sqrt(n)
-        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * N[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
-
-        # Calculate the return series for the combined portfolio
-        y_series_mat = np.sum(y_tens * coeff_mat, axis=2)
+        std_err[:, 4] = std_array[:, 5] / np.sqrt(N[:, 0, 0])  # STD/sqrt(n)
+        std_err[:, 5] = std_array[:, 5] / np.sqrt(2 * N[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 6] = std_array[:, 6] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 7] = std_array[:, 7] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
 
         return std_array, std_err, y_series_mat
 

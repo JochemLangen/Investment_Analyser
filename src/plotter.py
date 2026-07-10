@@ -46,22 +46,22 @@ class Plotter(Stats):
         ax2 = fig.add_axes([0.1, 0.1, 0.45, 0.35])
         ax2 = self.__generate_plot(
             ax2,
-            std_array[:, 2:],
-            std_err[:, 2:],
+            std_array[:, 4:],
+            std_err[:, 4:],
             time,
             std_mult,
             limit_mult,
             ylabel="Avg. Annualised Relative Return (%)",
         )
         plt.title(
-            f"Avg. Annualised Relative Return at {time[time_index]} months: {round(std_array[time_index, 2], 2)}%",
+            f"Avg. Annualised Relative Return at {time[time_index]} months: {round(std_array[time_index, 4], 2)}%",
             fontsize=self.fontsize,
         )
 
         # Distribution plot
         ax3 = fig.add_axes([0.65, 0.1, 0.3, 0.8])
         ax3 = self.__distr_plot(ax3, return_mat, std_mult, time, time_index)
-
+        plt.show()
         return
 
     def historic_plot(
@@ -194,10 +194,6 @@ class Plotter(Stats):
             # Determine the average annual return over the entire period
             year_diff = (t_fit[-1] - t_fit[0])/365.25
             avg_annual_return = ((return_series[-1]/100)**(1/year_diff) - 1)*100
-            print(year_diff)
-            print(avg_annual_return)
-            print(return_series[-1] - return_series[0])
-
 
             t_fit = self.revert_timeseries_back(t_fit)
             t_fit_index = self.revert_timeseries_back(t_fit_index)
@@ -220,6 +216,7 @@ class Plotter(Stats):
 
             self._set_ticks(ax3, t_fit)
 
+        plt.show()
         return
 
     def revert_timeseries_back(self, tick_time):
@@ -246,18 +243,13 @@ class Plotter(Stats):
         colours = (1 - colour_base) * std_mult / max(std_mult)
         colour_max_i = len(colours) - 1
 
-        # Calculate errors:
-        err = np.empty((np.shape(std_array)[0], len(std_mult)))
-        for index, stdi in enumerate(std_mult):
-            err[:, index] = np.sqrt(std_err[:, 0] ** 2 + (stdi * std_err[:, 1]) ** 2)
-
         # Positive std lines
         for index, stdi in enumerate(std_mult[::-1]):
             pos_colour = [0, colours[colour_max_i - index], colours[colour_max_i - index]]
             ax.errorbar(
                 time,
-                std_array[:, 0] + stdi * std_array[:, 1],
-                yerr=err[:, -index - 1],
+                std_array[:, 0] + stdi * std_array[:, 3],
+                yerr=np.sqrt(std_err[:, 0] ** 2 + (stdi * std_err[:, 3]) ** 2),
                 linestyle="--",
                 color=pos_colour,
                 marker="x",
@@ -273,8 +265,8 @@ class Plotter(Stats):
             neg_colour = [colours[index], 0, colours[index]]
             ax.errorbar(
                 time,
-                std_array[:, 0] - stdi * std_array[:, 1],
-                yerr=err[:, index],
+                std_array[:, 0] - stdi * std_array[:, 2],
+                yerr=np.sqrt(std_err[:, 0] ** 2 + (stdi * std_err[:, 2]) ** 2),
                 linestyle="--",
                 color=neg_colour,
                 marker="x",
@@ -282,8 +274,8 @@ class Plotter(Stats):
             )
 
         ax.legend()
-        lim_max = max(std_array[:, 0] + limit_mult * std_array[:, 1])
-        lim_min = max([-100, min(std_array[:, 0] - limit_mult * std_array[:, 1])])
+        lim_max = max(std_array[:, 0] + limit_mult * std_array[:, 3])
+        lim_min = max([-100, min(std_array[:, 0] - limit_mult * std_array[:, 2])])
         plt.ylim([lim_min, lim_max])
         plt.xlim([time[0], time[-1]])
         if scale == "log":
@@ -316,7 +308,14 @@ class Plotter(Stats):
         y_len = len(y_series)
 
         y_mean = np.mean(y_series)
-        y_std = np.std(y_series, ddof=1)
+
+        n_elem = np.shape(y_series)[0]
+
+        downside_var = 2 * np.nanmean(np.square(np.maximum(0, y_mean - y_series))) * n_elem / (n_elem - 1)
+        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_series - y_mean))) * n_elem / (n_elem - 1)
+        downside_std = np.sqrt(downside_var)
+        upside_std = np.sqrt(upside_var)
+        y_std = np.append([upside_std]*(len(std_mult)+1),[downside_std]*len(std_mult))
 
         # Plot the histogram
         # The Freedman-Diaconis rule is used to obtain the bin width:
@@ -337,7 +336,7 @@ class Plotter(Stats):
         ylim = [ylimits[0], ylimits[1] * 11 / 10]  # To provide space for the text
 
         for index, stdi in enumerate(std_mult_arr):
-            x_pos = y_mean + stdi * y_std
+            x_pos = y_mean + stdi * y_std[index]
             ax.plot([x_pos, x_pos], ylim, linestyle=":", color="black", zorder=index)
 
             # Print corresponding percentage
@@ -370,16 +369,23 @@ class Plotter(Stats):
 
         # Plot normal distr.
         xlimits = ax.get_xlim()
-        return_arr = np.linspace(xlimits[0], xlimits[1], 100)
+        return_arr = np.linspace(xlimits[0], y_mean, 60)
         prob_arr = scipy.stats.truncnorm.pdf(
-            return_arr, (-100 - y_mean) / y_std, np.inf, loc=y_mean, scale=y_std
+            return_arr, (-100 - y_mean) / downside_std, np.inf, loc=y_mean, scale=downside_std
         )
 
         ax.plot(return_arr, prob_arr, linestyle="--", color="black", zorder=31)
 
-        if y_mean + (std_mult[-1] + 1) * y_std > bin_lim[1]:
+        return_arr = np.linspace(y_mean, xlimits[1], 60)
+        prob_arr = scipy.stats.truncnorm.pdf(
+            return_arr, (-100 - y_mean) / upside_std, np.inf, loc=y_mean, scale=upside_std
+        )
+
+        ax.plot(return_arr, prob_arr, linestyle="--", color="black", zorder=31)
+
+        if y_mean + (std_mult[-1] + 1) * upside_std > bin_lim[1]:
             plt.xlim(
-                [y_mean - std_mult[-1] * y_std - bin_width, y_mean + (std_mult[-1] + 1) * y_std]
+                [y_mean - std_mult[-1] * downside_std - bin_width, y_mean + (std_mult[-1] + 1) * upside_std]
             )  # Extra space because of text
         else:
             plt.xlim(bin_lim)
