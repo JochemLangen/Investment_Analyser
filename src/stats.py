@@ -36,6 +36,9 @@ class Stats(Base):
         std_err : ndarray, shape (n_periods, 8)
             Standard error / uncertainty for corresponding std_array columns.
         """
+        # Ensure floats
+        time = np.asarray(time, dtype=float)
+
         # Only 2D (matrix) is supported
         # Make sure y_mx is numpy array and turn into percentile data
         y_mx = np.asarray(y_mx) * 100
@@ -56,8 +59,18 @@ class Stats(Base):
 
         # Calculate the downside and upside semivariance
         mean_expanded = np.expand_dims(mean, axis=axis)
-        downside_var = 2 * np.nanmean(np.square(np.maximum(0, mean_expanded - y_mx)), axis=axis) * n_elem / (n_elem - 1)
-        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_mx - mean_expanded)), axis=axis) * n_elem / (n_elem - 1)
+        downside_var = (
+            2
+            * np.nanmean(np.square(np.maximum(0, mean_expanded - y_mx)), axis=axis)
+            * n_elem
+            / (n_elem - 1)
+        )
+        upside_var = (
+            2
+            * np.nanmean(np.square(np.maximum(0, y_mx - mean_expanded)), axis=axis)
+            * n_elem
+            / (n_elem - 1)
+        )
         std_array[:, 2] = np.sqrt(downside_var)
         std_array[:, 3] = np.sqrt(upside_var)
 
@@ -80,8 +93,22 @@ class Stats(Base):
 
         # Calculate the downside and upside semivariance for annualised returns
         annual_mean_expanded = np.expand_dims(annual_mean, axis=axis)
-        annual_downside_var = 2 * np.nanmean(np.square(np.maximum(0, annual_mean_expanded - annualised_y_mx)), axis=axis) * n_elem / (n_elem - 1)
-        annual_upside_var = 2 * np.nanmean(np.square(np.maximum(0, annualised_y_mx - annual_mean_expanded)), axis=axis) * n_elem / (n_elem - 1)
+        annual_downside_var = (
+            2
+            * np.nanmean(
+                np.square(np.maximum(0, annual_mean_expanded - annualised_y_mx)), axis=axis
+            )
+            * n_elem
+            / (n_elem - 1)
+        )
+        annual_upside_var = (
+            2
+            * np.nanmean(
+                np.square(np.maximum(0, annualised_y_mx - annual_mean_expanded)), axis=axis
+            )
+            * n_elem
+            / (n_elem - 1)
+        )
         std_array[:, 6] = np.sqrt(annual_downside_var)
         std_array[:, 7] = np.sqrt(annual_upside_var)
 
@@ -99,6 +126,7 @@ class Stats(Base):
 
         # Extract the arguments
         nargs = len(args)
+        # THe input is return matrix and coefficients in pairs:
         y_matrices = args[0:nargs:2]  # Extract the uneven *args -> y_mx
         coeffs = args[1:nargs:2]  # Extract the even *args -> coeffs
 
@@ -106,21 +134,32 @@ class Stats(Base):
 
         # Calculate the covariance matrix, note this method was used as it will be
         # the same as for the fitting
-        results_tens, y_tens, N = self.__calc_cov(*y_mat)
+        means, cov, hedging_cov, gains_cov, n_elem, y_tens = self.calc_cov(*y_mat)
 
         ## Calculate annualised covariance matrix
         annualised_y_mat = self.__annualise(time, *y_mat)
 
-        ann_results_tens, ann_y_tens, _ = self.__calc_cov(*annualised_y_mat)
+        ann_means, ann_cov, ann_hedging_cov, ann_gains_cov, _, _ = self.calc_cov(*annualised_y_mat)
 
         # Combine the covariance matrix data to find the mean and std for each time interval point
         std_array, std_err, return_series = self.__comb_std(
-            results_tens, ann_results_tens, y_tens, ann_y_tens, N, coeff, *coeffs
+            means,
+            cov,
+            hedging_cov,
+            gains_cov,
+            ann_means,
+            ann_cov,
+            ann_hedging_cov,
+            ann_gains_cov,
+            n_elem,
+            y_tens,
+            coeff,
+            *coeffs,
         )
 
         return std_array, std_err, return_series
 
-    def __calc_cov(self, y_mx, *args, **kwargs):
+    def calc_cov(self, y_mx, *args, **kwargs):
         # Args must be y_mx arrays
         # Parse kwargs
         axis = kwargs.get("axis", 1)
@@ -136,70 +175,78 @@ class Stats(Base):
         # (x_i - x_mean)(y_i - y_mean), the other the time interval used for the series and the other the
         # combination of the variables used (i.e. the combination of the original y_mx, i.e. x and y)
         # cov_tens
-        y_shape = np.shape(y_tens)
-        cov_tens = np.empty((y_shape[0], y_shape[1], y_shape[2], y_shape[2]))
-
-        # Create the upper triangular matrix
-        for i in range(y_shape[2]):
-            cov_tens[:, :, i, :] = resid_tens[:, :, [i]] * resid_tens[:, :, :]
-
-        # Extend to the lower triangular matrix:
-        # cov_tens = cov_tens + np.transpose(cov_tens, axes=(0,1,3,2)) - np.diagonal(cov_tens, axis1=2, axis2=3, keepdims=True)
+        cov_tens = resid_tens[:, :, :, None] * resid_tens[:, :, None, :]
 
         # Calculate tensor sums (which can be added to get the total std)
-        N = np.sum(~np.isnan(y_tens), axis=axis, keepdims=True)[
+        n_elem = np.sum(~np.isnan(y_tens), axis=axis, keepdims=True)[
             :, :, [0]
         ]  # Take the sum of non-nan values of first security, should be the same for all
-        cov_sum = np.nansum(cov_tens, axis=axis) / (N - 1)
+        cov_sum = np.nansum(cov_tens, axis=axis) / (n_elem - 1)
 
-        # First row along second axis is the means, rather than the covariances
-        results_tens = np.append(means_tens, cov_sum, axis=axis)
+        # The variance consists of four terms:
+        # Both delta terms are positive: del_1 * del_2
+        # Both delta terms are negative: -del_1 * -del_2
+        # The first delta term is postive and the second negative: del_1 * -del_2
+        # The first delta term is negative and the second positive: -del_1 * del_2
+        #
+        # Where the delta is |mean - value|
+        # For self-correlation, only the first two terms occur (as del_1 == del_2, they are always have the same sign)
+        # So, to scale the downside_variance to be the same magnitude as the standard deviation, it should be multiplied
+        # by a factor of 2 for self-correlation.
+        #
+        # For correlation between two different variables, it should be multiplied by two but only to have the same scale
+        # as the net positive terms (so both del_1 and del_2) have the same sign.
+        # The total hedging_std is therefore: 2*downside_var (both negative) + anticorr_var (both mixed terms together)
 
-        return results_tens, y_tens, N
+        # Calculate the downside covariance sum, only including pairs where both
+        # residuals are negative.
+        downside_mask = np.logical_and(
+            resid_tens[:, :, :, None] < 0,
+            resid_tens[:, :, None, :] < 0,
+        )
+        downside_cov_sum = (
+            2 * np.nansum(np.where(downside_mask, cov_tens, np.nan), axis=axis) / (n_elem - 1)
+        )
 
-    def __comb_std(self, cov_tens, ann_cov_tens, y_tens, ann_y_tens, N, coeff, *args):
-        """Combine covariance results into portfolio statistics.
+        # Calculate the upside covariance sum, only including pairs where both
+        # residuals are positive.
+        upside_mask = np.logical_and(
+            resid_tens[:, :, :, None] > 0,
+            resid_tens[:, :, None, :] > 0,
+        )
+        upside_cov_sum = (
+            2 * np.nansum(np.where(upside_mask, cov_tens, np.nan), axis=axis) / (n_elem - 1)
+        )
 
-        Parameters
-        ----------
-        cov_tens : ndarray
-            Covariance tensor for raw returns.
-        ann_cov_tens : ndarray
-            Covariance tensor for annualised returns.
-        y_tens : ndarray
-            Stacked return matrices for the raw returns.
-        ann_y_tens : ndarray
-            Stacked return matrices for the annualised returns.
-        N : ndarray
-            Count of non-NaN observations used for standard error calculation.
-        coeff : float
-            First coefficient used to combine return series.
-        *args : float
-            Additional coefficients for combination.
+        # Anticorrelation cov sum (where one is positive and the other negative)
+        anticorr_mask = np.logical_and(~downside_mask, ~upside_mask)
+        anticorr_cov_sum = np.nansum(np.where(anticorr_mask, cov_tens, np.nan), axis=axis) / (
+            n_elem - 1
+        )
 
-        Returns
-        -------
-        std_array : ndarray, shape (n_periods, 8)
-            Columns contain:
-            0: combined mean
-            1: combined std
-            2: combined downside semistd (multiplied by 2 to be the same magnitude as regular std)
-            3: combined upside semistd (*)
-            4: combined annualised mean
-            5: combined annualised std
-            6: combined annualised downside semistd (*)
-            7: combined annualised upside semistd (*)
-        std_err : ndarray, shape (n_periods, 8)
-            Standard error / uncertainty for corresponding std_array columns.
-        y_series_mat : ndarray
-            Combined return series from the weighted raw returns.
+        hedging_cov_sum = downside_cov_sum + anticorr_cov_sum
+        gains_cov_sum = upside_cov_sum + anticorr_cov_sum
 
+        return means_tens, cov_sum, hedging_cov_sum, gains_cov_sum, n_elem, y_tens
 
-        Note: Calculation of semistd should be checked!
-        """
-
+    def __comb_std(
+        self,
+        means,
+        cov,
+        hedging_cov,
+        gains_cov,
+        ann_means,
+        ann_cov,
+        ann_hedging_cov,
+        ann_gains_cov,
+        n_elem,
+        y_tens,
+        coeff,
+        *args,
+    ):
+        """Combine covariance results into portfolio statistics."""
         # Set up STD matrix, mean and std
-        std_array = np.empty((np.shape(cov_tens)[0], 8))
+        std_array = np.empty((np.shape(means)[0], 8))
 
         # STD error array, SE and uncertainty in std
         std_err = std_array.copy()
@@ -213,48 +260,31 @@ class Stats(Base):
         coeff_sqrd = np.transpose(coeff_tens, axes=(0, 2, 1)) * coeff_tens
 
         # Calculate the std array:
-        std_array[:, 0] = np.sum(cov_tens[:, 0, :] * coeff_mat, axis=1)
-
-        w_cov_tens = cov_tens[:, 1:, :] * coeff_sqrd
-        std_array[:, 1] = np.sqrt(np.sum(w_cov_tens, axis=(1, 2)))
-
-        # Calculate the downside and upside semivariance for the combined portfolio
-        y_series_mat = np.sum(y_tens * coeff_mat, axis=2)
-
-        n_elem = np.shape(y_series_mat)[1]
-        combined_mean = np.nanmean(y_series_mat, axis=1)
-        mean_expanded = np.expand_dims(combined_mean, axis=1)
-        downside_var = 2 * np.nanmean(np.square(np.maximum(0, mean_expanded - y_series_mat)), axis=1) * n_elem / (n_elem - 1)
-        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_series_mat - mean_expanded)), axis=1) * n_elem / (n_elem - 1)
-        std_array[:, 2] = np.sqrt(downside_var)
-        std_array[:, 3] = np.sqrt(upside_var)
+        std_array[:, 0] = np.sum(means * coeff_mat, axis=1)
+        std_array[:, 1] = np.sqrt(np.sum(cov * coeff_sqrd, axis=(1, 2)))
+        std_array[:, 2] = np.sqrt(np.sum(hedging_cov * coeff_sqrd, axis=(1, 2)))
+        std_array[:, 3] = np.sqrt(np.sum(gains_cov * coeff_sqrd, axis=(1, 2)))
 
         # Calcualte the uncertainty on the mean and standard deviation
-        std_err[:, 0] = std_array[:, 1] / np.sqrt(N[:, 0, 0])  # STD/sqrt(n)
-        std_err[:, 1] = std_array[:, 1] / np.sqrt(2 * N[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
-        std_err[:, 2] = std_array[:, 2] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
-        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 0] = std_array[:, 1] / np.sqrt(n_elem[:, 0, 0])  # STD/sqrt(n)
+        std_err[:, 1] = std_array[:, 1] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 2] = std_array[:, 2] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 3] = std_array[:, 3] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
 
         ## Calculate annualised std array:
-        std_array[:, 4] = np.sum(ann_cov_tens[:, 0, :] * coeff_mat, axis=1)
-
-        w_ann_cov_tens = ann_cov_tens[:, 1:, :] * coeff_sqrd
-        std_array[:, 5] = np.sqrt(np.sum(w_ann_cov_tens, axis=(1, 2)))
-
-        # Calculate the downside and upside semivariance for the annualised combined portfolio
-        ann_y_series_mat = np.sum(ann_y_tens * coeff_mat, axis=2)
-        ann_combined_mean = np.nanmean(ann_y_series_mat, axis=1)
-        ann_mean_expanded = np.expand_dims(ann_combined_mean, axis=1)
-        ann_downside_var = 2 * np.nanmean(np.square(np.maximum(0, ann_mean_expanded - ann_y_series_mat)), axis=1) * n_elem / (n_elem - 1)
-        ann_upside_var = 2 * np.nanmean(np.square(np.maximum(0, ann_y_series_mat - ann_mean_expanded)), axis=1) * n_elem / (n_elem - 1)
-        std_array[:, 6] = np.sqrt(ann_downside_var)
-        std_array[:, 7] = np.sqrt(ann_upside_var)
+        std_array[:, 4] = np.sum(ann_means * coeff_mat, axis=1)
+        std_array[:, 5] = np.sqrt(np.sum(ann_cov * coeff_sqrd, axis=(1, 2)))
+        std_array[:, 6] = np.sqrt(np.sum(ann_hedging_cov * coeff_sqrd, axis=(1, 2)))
+        std_array[:, 7] = np.sqrt(np.sum(ann_gains_cov * coeff_sqrd, axis=(1, 2)))
 
         # Calcualte the uncertainty on the mean and standard deviation
-        std_err[:, 4] = std_array[:, 5] / np.sqrt(N[:, 0, 0])  # STD/sqrt(n)
-        std_err[:, 5] = std_array[:, 5] / np.sqrt(2 * N[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
-        std_err[:, 6] = std_array[:, 6] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
-        std_err[:, 7] = std_array[:, 7] / np.sqrt(2 * N[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 4] = std_array[:, 5] / np.sqrt(n_elem[:, 0, 0])  # STD/sqrt(n)
+        std_err[:, 5] = std_array[:, 5] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # STD/sqrt(2*n -2)
+        std_err[:, 6] = std_array[:, 6] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+        std_err[:, 7] = std_array[:, 7] / np.sqrt(2 * n_elem[:, 0, 0] - 2)  # semistd/sqrt(2*n -2)
+
+        # Return series
+        y_series_mat = np.sum(y_tens * coeff_mat, axis=2)
 
         return std_array, std_err, y_series_mat
 

@@ -65,16 +65,27 @@ class Plotter(Stats):
         return
 
     def historic_plot(
-        self, return_series, tick_time, orig_tick_time,
-        index_return_series, index_tick_time, orig_index_tick_time,
-        security_start_tick, backtrace_factor_series, backtrace_series, backtrace_params, title_input,
+        self,
+        return_series,
+        tick_time,
+        orig_tick_time,
+        index_return_series,
+        index_tick_time,
+        orig_index_tick_time,
+        security_start_tick,
+        backtrace_factor_series,
+        backtrace_series,
+        backtrace_params,
+        title_input,
     ):
         # Take only the values of the return series that correspond to the original tick time
         orig_return_series = return_series[np.isin(tick_time, orig_tick_time)]
         orig_return_series = orig_return_series / orig_return_series[0] * 100
 
         if len(index_return_series) > 0:
-            orig_index_return_series = index_return_series[np.isin(index_tick_time, orig_index_tick_time)]
+            orig_index_return_series = index_return_series[
+                np.isin(index_tick_time, orig_index_tick_time)
+            ]
             valid_index_ticks = orig_index_tick_time >= orig_tick_time[0]
 
             orig_index_tick_time = orig_index_tick_time[valid_index_ticks]
@@ -82,8 +93,8 @@ class Plotter(Stats):
             orig_index_return_series = orig_index_return_series / orig_index_return_series[0] * 100
 
         # Determine the average annual return over the entire period
-        year_diff = (orig_tick_time[-1] - orig_tick_time[0])/365.25
-        avg_annual_return = ((orig_return_series[-1]/100)**(1/year_diff) - 1)*100
+        year_diff = (orig_tick_time[-1] - orig_tick_time[0]) / 365.25
+        avg_annual_return = ((orig_return_series[-1] / 100) ** (1 / year_diff) - 1) * 100
 
         # Format tick time back to datetime format
         t = self.revert_timeseries_back(orig_tick_time)
@@ -101,17 +112,31 @@ class Plotter(Stats):
             f"Avg. annual return: {avg_annual_return:.2f}%",
             ha="center",
             va="top",
-            fontsize=self.fontsize-3,
+            fontsize=self.fontsize - 3,
             transform=ax.transAxes,
         )
         plt.title(title_input, fontsize=self.fontsize, loc="left")
 
         lim_max = max(orig_return_series)
-        lim_min = min(max([0, min(orig_return_series)]),100)
+        lim_min = min(max([0, min(orig_return_series)]), 100)
 
-        ax.plot([t[0], t[-1]], [orig_return_series[0], orig_return_series[-1]], color="gray", linestyle=":", label=f"{avg_annual_return:.2f}% annual return")
-        t_str_inception = dt.datetime.utcfromtimestamp(int(np.round(t_inception[0]))).strftime("%Y/%m/%d")
-        ax.plot([t_inception, t_inception], [lim_min, lim_max], color="red", linestyle="--", label=f"Security Inception: {t_str_inception}")
+        ax.plot(
+            [t[0], t[-1]],
+            [orig_return_series[0], orig_return_series[-1]],
+            color="gray",
+            linestyle=":",
+            label=f"{avg_annual_return:.2f}% annual return",
+        )
+        t_str_inception = dt.datetime.utcfromtimestamp(int(np.round(t_inception[0]))).strftime(
+            "%Y/%m/%d"
+        )
+        ax.plot(
+            [t_inception, t_inception],
+            [lim_min, lim_max],
+            color="red",
+            linestyle="--",
+            label=f"Security Inception: {t_str_inception}",
+        )
         if len(index_return_series) > 0:
             ax.plot(t_index, orig_index_return_series, color="green", label="Raw Index")
         ax.plot(t, orig_return_series, color="black", label="Index (incl. dividends) + Security")
@@ -129,13 +154,23 @@ class Plotter(Stats):
         if len(backtrace_factor_series) > 0:
             # Also normalise this to one, this does not necessarily need to start at one,
             # but the index and security data above have also been normalised, so this data should match
-            backtrace_factor_series = backtrace_factor_series/ backtrace_factor_series[0]
+            backtrace_factor_series = backtrace_factor_series / backtrace_factor_series[0]
 
             t_index_full = self.revert_timeseries_back(index_tick_time[1:])
 
             ax2 = fig.add_axes([0.1, 0.1, 0.35, 0.35])
-            ax2.plot(t_index_full, backtrace_factor_series, color="blue", linestyle="--", label="Backtrace Model")
-            plt.title("Backtracing conversion factor from index to security", fontsize=self.fontsize, loc="left")
+            ax2.plot(
+                t_index_full,
+                backtrace_factor_series,
+                color="blue",
+                linestyle="--",
+                label="Backtrace Model",
+            )
+            plt.title(
+                "Backtracing conversion factor from index to security",
+                fontsize=self.fontsize,
+                loc="left",
+            )
 
             lim_max = max(backtrace_factor_series)
             lim_min = min([1, min(backtrace_factor_series)])
@@ -149,17 +184,29 @@ class Plotter(Stats):
             # Add backtrace fitting statistics text
             if backtrace_params:
                 backtrace_text_lines = []
-                backtrace_text_lines.append(f"Model type: {backtrace_params.get('Model type', 'N/A')}")
-                backtrace_text_lines.append(f"Condition no. mag: {backtrace_params.get('Condition no. mag', 'N/A'):.2f}")
+                backtrace_text_lines.append(
+                    f"Model type: {backtrace_params.get('Model type', 'N/A')}"
+                )
+                backtrace_text_lines.append(
+                    f"Condition no. mag: {backtrace_params.get('Condition no. mag', 'N/A'):.2f}"
+                )
                 backtrace_text_lines.append(f"R_adj²: {backtrace_params.get('R_adj^2', 'N/A'):.4f}")
-                backtrace_text_lines.append(f"Durbin-Watson: {backtrace_params.get('Durbin-Watson', 'N/A'):.4f}")
+                backtrace_text_lines.append(
+                    f"Durbin-Watson: {backtrace_params.get('Durbin-Watson', 'N/A'):.4f}"
+                )
 
                 if "Exp-trig corr" in backtrace_params:
-                    backtrace_text_lines.append(f"Exp-trig corr: {backtrace_params['Exp-trig corr']:.4f}")
+                    backtrace_text_lines.append(
+                        f"Exp-trig corr: {backtrace_params['Exp-trig corr']:.4f}"
+                    )
                 if "Exp-trig orth" in backtrace_params:
-                    backtrace_text_lines.append(f"Exp-trig orth: {backtrace_params['Exp-trig orth']:.4f}")
+                    backtrace_text_lines.append(
+                        f"Exp-trig orth: {backtrace_params['Exp-trig orth']:.4f}"
+                    )
                 if "Max exp_trig orth" in backtrace_params:
-                    backtrace_text_lines.append(f"Max exp_trig orth: {backtrace_params['Max exp_trig orth']:.4f}")
+                    backtrace_text_lines.append(
+                        f"Max exp_trig orth: {backtrace_params['Max exp_trig orth']:.4f}"
+                    )
 
                 backtrace_text = "\n".join(backtrace_text_lines)
                 ax2.text(
@@ -168,7 +215,7 @@ class Plotter(Stats):
                     backtrace_text,
                     ha="left",
                     va="top",
-                    fontsize=self.fontsize-3,
+                    fontsize=self.fontsize - 3,
                     transform=ax2.transAxes,
                     family="monospace",
                     bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
@@ -176,7 +223,9 @@ class Plotter(Stats):
 
         # Plot 3
         if len(index_return_series) > 0 and len(backtrace_series) > 0:
-            valid_index_ticks = index_tick_time[1:] >= (security_start_tick + DEFAULT_SMOOTHENING_RANGE)
+            valid_index_ticks = index_tick_time[1:] >= (
+                security_start_tick + DEFAULT_SMOOTHENING_RANGE
+            )
             backtrace_series = backtrace_series[valid_index_ticks]
             backtrace_series = backtrace_series / backtrace_series[0] * 100
 
@@ -192,18 +241,28 @@ class Plotter(Stats):
             t_fit = tick_time[valid_ticks]
 
             # Determine the average annual return over the entire period
-            year_diff = (t_fit[-1] - t_fit[0])/365.25
-            avg_annual_return = ((return_series[-1]/100)**(1/year_diff) - 1)*100
+            year_diff = (t_fit[-1] - t_fit[0]) / 365.25
+            avg_annual_return = ((return_series[-1] / 100) ** (1 / year_diff) - 1) * 100
 
             t_fit = self.revert_timeseries_back(t_fit)
             t_fit_index = self.revert_timeseries_back(t_fit_index)
 
             ax3 = fig.add_axes([0.55, 0.1, 0.35, 0.35])
-            ax3.plot([t_fit[0], t_fit[-1]], [return_series[0], return_series[-1]], color="gray", linestyle=":", label=f"{avg_annual_return:.2f}% annual return")
+            ax3.plot(
+                [t_fit[0], t_fit[-1]],
+                [return_series[0], return_series[-1]],
+                color="gray",
+                linestyle=":",
+                label=f"{avg_annual_return:.2f}% annual return",
+            )
             ax3.plot(t_fit_index, index_return_series, color="green", label="Raw Index")
             ax3.plot(t_fit_index, backtrace_series, color="orange", label="Scaled Index")
             ax3.plot(t_fit, return_series, color="black", label="Security")
-            plt.title(f"Historic series backtracing fit for security ({t_str_inception}+)", fontsize=self.fontsize, loc="left")
+            plt.title(
+                f"Historic series backtracing fit for security ({t_str_inception}+)",
+                fontsize=self.fontsize,
+                loc="left",
+            )
 
             lim_max = max(return_series)
             lim_min = min(index_return_series)
@@ -220,10 +279,9 @@ class Plotter(Stats):
         return
 
     def revert_timeseries_back(self, tick_time):
-        return (tick_time - self.convert_time(
-            np.array(["01/Jan/1970"]), time_form="iShares"
-        )) * 86400
-
+        return (
+            tick_time - self.convert_time(np.array(["01/Jan/1970"]), time_form="iShares")
+        ) * 86400
 
     def __generate_plot(
         self,
@@ -311,11 +369,15 @@ class Plotter(Stats):
 
         n_elem = np.shape(y_series)[0]
 
-        downside_var = 2 * np.nanmean(np.square(np.maximum(0, y_mean - y_series))) * n_elem / (n_elem - 1)
-        upside_var = 2 * np.nanmean(np.square(np.maximum(0, y_series - y_mean))) * n_elem / (n_elem - 1)
+        downside_var = (
+            2 * np.nanmean(np.square(np.maximum(0, y_mean - y_series))) * n_elem / (n_elem - 1)
+        )
+        upside_var = (
+            2 * np.nanmean(np.square(np.maximum(0, y_series - y_mean))) * n_elem / (n_elem - 1)
+        )
         downside_std = np.sqrt(downside_var)
         upside_std = np.sqrt(upside_var)
-        y_std = np.append([upside_std]*(len(std_mult)+1),[downside_std]*len(std_mult))
+        y_std = np.append([upside_std] * (len(std_mult) + 1), [downside_std] * len(std_mult))
 
         # Plot the histogram
         # The Freedman-Diaconis rule is used to obtain the bin width:
@@ -363,9 +425,7 @@ class Plotter(Stats):
                     zorder=32,
                 )
             else:
-                plt.text(
-                    x_pos + bin_width / 2, txt_y_pos, f"mean\n={percentage}%", zorder=32
-                )
+                plt.text(x_pos + bin_width / 2, txt_y_pos, f"mean\n={percentage}%", zorder=32)
 
         # Plot normal distr.
         xlimits = ax.get_xlim()
@@ -385,7 +445,10 @@ class Plotter(Stats):
 
         if y_mean + (std_mult[-1] + 1) * upside_std > bin_lim[1]:
             plt.xlim(
-                [y_mean - std_mult[-1] * downside_std - bin_width, y_mean + (std_mult[-1] + 1) * upside_std]
+                [
+                    y_mean - std_mult[-1] * downside_std - bin_width,
+                    y_mean + (std_mult[-1] + 1) * upside_std,
+                ]
             )  # Extra space because of text
         else:
             plt.xlim(bin_lim)
@@ -403,12 +466,10 @@ class Plotter(Stats):
         )
         plt.xticks(fontsize=self.fontsize)
         plt.yticks(fontsize=self.fontsize)
-        plt.title(
-            f"Return distribution at {time[time_index]} months", fontsize=self.fontsize
-        )
+        plt.title(f"Return distribution at {time[time_index]} months", fontsize=self.fontsize)
 
         return ax
-    
+
     def _set_ticks(self, ax, t):
         ax.tick_params(left=True, right=True, labelleft=True, labelright=True)
         plt.yticks(fontsize=self.fontsize)
@@ -428,7 +489,7 @@ class Plotter(Stats):
                 for x in xtick_positions
             ]
             ax.set_xticks(xtick_positions)
-            ax.set_xticklabels(xtick_labels, fontsize=self.fontsize-3, rotation=45, ha="right")
+            ax.set_xticklabels(xtick_labels, fontsize=self.fontsize - 3, rotation=45, ha="right")
             plt.xlim([t[0], t[-1]])
         return
 

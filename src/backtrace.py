@@ -7,6 +7,7 @@ from warnings import warn
 
 DEFAULT_SMOOTHENING_RANGE = 5
 
+
 class Backtrace(Base):
     script_location = realpath(__file__)
 
@@ -14,9 +15,17 @@ class Backtrace(Base):
         return
 
     def backtrace_data(
-        self, y, y_old, t, t_old, t_orig, t_orig_old,
-        model_type="Osc", smth_index_rng=DEFAULT_SMOOTHENING_RANGE, calc_ortho=False,
-        benchmark=""
+        self,
+        y,
+        y_old,
+        t,
+        t_old,
+        t_orig,
+        t_orig_old,
+        model_type="Osc",
+        smth_index_rng=DEFAULT_SMOOTHENING_RANGE,
+        calc_ortho=False,
+        benchmark="",
     ):
         # Used to fit the index data to the security data and extrapolate backwards
         # Creating security data that goes as far back as the index data
@@ -35,13 +44,15 @@ class Backtrace(Base):
         # Slice the old data to be on the same timescale as the security y_data (+ one element back)
         t_old_inception_idx = np.argmin(np.abs(t_old - t[0]))
         t_old_end_idx = np.argmin(np.abs(t_old - t[-1]))
-        y_len = t_old_end_idx - t_old_inception_idx # Note, y_old may have an earlier cut off date than y
-        short_y_old = y_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]
-        short_t_old = t_old[max(t_old_inception_idx-1,0):t_old_end_idx+1]        
+        y_len = (
+            t_old_end_idx - t_old_inception_idx
+        )  # Note, y_old may have an earlier cut off date than y
+        short_y_old = y_old[max(t_old_inception_idx - 1, 0) : t_old_end_idx + 1]
+        short_t_old = t_old[max(t_old_inception_idx - 1, 0) : t_old_end_idx + 1]
 
         # Normalise y_old, t_old and y data:
         y_n_factor = max(y)
-        y_norm = y[:np.argmin(np.abs(t - short_t_old[-1]))+1] / y_n_factor
+        y_norm = y[: np.argmin(np.abs(t - short_t_old[-1])) + 1] / y_n_factor
         y_old_n_factor = max(short_y_old)
         y_old_norm = short_y_old / y_old_n_factor
         t_old_n_factor = short_t_old[-1]
@@ -161,7 +172,11 @@ class Backtrace(Base):
 
         fitting_failed = False
 
-        if results["Durbin-Watson"] < 0.1 or results["Durbin-Watson"] > 3.5 and results["R_adj^2"] < 0.93:
+        if (
+            results["Durbin-Watson"] < 0.1
+            or results["Durbin-Watson"] > 3.5
+            and results["R_adj^2"] < 0.93
+        ):
             warn(
                 f"For the security with benchmark {benchmark}:\n"
                 "The Durbin-Watson statistic is outside the range of 0.1 to 3.5 and "
@@ -180,14 +195,13 @@ class Backtrace(Base):
             comb_input = np.asarray([y_old, t_old])
             fitted_y = model(comb_input, *popt)
 
-            new_y = np.append(fitted_y[:t_old_inception_idx-1], y)
+            new_y = np.append(fitted_y[: t_old_inception_idx - 1], y)
             new_t = np.append(t_old[1:t_old_inception_idx], t)
 
             # Define the new timestamps of the original (non-interpolated) data from the combined
             # backtraced dataset
             new_orig_t = np.append(
-                t_orig_old[1:np.argmin(np.abs(t_orig_old - t_orig[0]))],
-                t_orig
+                t_orig_old[1 : np.argmin(np.abs(t_orig_old - t_orig[0]))], t_orig
             )
 
             # Use interpolation to smooth the transition from the fitted old data to the new data
@@ -258,13 +272,9 @@ class Backtrace(Base):
 
     def evaluate_model(self, y_old, t_old, popt, model_type="Osc"):
         if model_type == "Osc":
-            y_model = self.osc_backtrace_model(
-                np.asarray([y_old, t_old]), *popt
-            )
+            y_model = self.osc_backtrace_model(np.asarray([y_old, t_old]), *popt)
         elif model_type == "Exp":
-            y_model = self.exp_backtrace_model(
-                np.asarray([y_old, t_old]), *popt
-            )
+            y_model = self.exp_backtrace_model(np.asarray([y_old, t_old]), *popt)
         return y_model
 
     def exp_backtrace_model(self, x, a, b, exp_rat):

@@ -45,9 +45,8 @@ class DataLoader(Base):
                 file_ext = os.path.splitext(file)[1]
 
                 # Check the file type (data source -> determines how it should be handled)
-                if (
-                    (file.find("iShares") != -1 or file.find("STOXX") != -1)
-                    and (file_ext == ".xls" or file_ext == ".xlsx")
+                if (file.find("iShares") != -1 or file.find("STOXX") != -1) and (
+                    file_ext == ".xls" or file_ext == ".xlsx"
                 ):
                     # For iShares, .xls files are not formatted correctly yet
                     if file_ext == ".xls":
@@ -318,9 +317,7 @@ class DataLoader(Base):
 
         df = pd.DataFrame(
             data={
-                "Timestamp": pd.to_numeric(
-                    js["chart"]["result"][0]["timestamp"], errors="coerce"
-                ),
+                "Timestamp": pd.to_numeric(js["chart"]["result"][0]["timestamp"], errors="coerce"),
                 "Adj Close": pd.to_numeric(
                     js["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"],
                     errors="coerce",

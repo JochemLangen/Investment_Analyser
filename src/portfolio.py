@@ -1,3 +1,4 @@
+import fnmatch
 import os
 import pickle
 import re
@@ -8,7 +9,9 @@ import pyautogui
 from investment_analyser.backtrace import Backtrace
 from investment_analyser.data_loader import DataLoader
 from investment_analyser.plotter import Plotter
-from investment_analyser.security import Security
+from investment_analyser.security import Security, STANDARD_MONTH_SIZE
+
+MARKET_FACTOR_SECURITY = "*Core*S&P*500*"
 
 
 class Portfolio(Security, Plotter, DataLoader, Backtrace):
@@ -23,7 +26,7 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
         start_date=None,
         load=False,
         overwrite_new_file_names=False,
-        fetch_data=None # Can be "All", "non-fx", "securities", "indices" or "fx"
+        fetch_data=None,  # Can be "All", "non-fx", "securities", "indices" or "fx"
     ):
 
         Plotter.__init__(self)
@@ -52,9 +55,10 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
         # Load all the securities from the data folder into a dictionary
         self.securities = {}
         self.perform_task(
-            self.dataframe["Name"][valid_securities], "load_securities",
+            self.dataframe["Name"][valid_securities],
+            "load_securities",
             load=load,
-            fx_df=self.dataframe[["Currency", "Currency_loc"]].dropna()
+            fx_df=self.dataframe[["Currency", "Currency_loc"]].dropna(),
         )
         security_names = list(self.securities.keys())
 
@@ -213,8 +217,100 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
 
         return
 
-    def optimise(self):
+    def optimise(self, months=None, start_date=None):
         # Find the most optimised portfolio, given input on priorities
+        securities = self.securities.copy()
+
+        tick_intervals, market_std_factor, market_std_err_factor = self._calculate_market_factor(
+            MARKET_FACTOR_SECURITY
+        )
+
+        no_sec = len(securities.keys())
+        no_months = len(months)
+
+        return_vector = np.empty((no_months,no_sec))
+        cov_matrix = np.empty_like((no_months, no_sec, no_sec))
+        upside_cov_matrix = np.empty_like(cov_matrix)
+        downside_cov_matrix = np.empty_like(cov_matrix)
+        # start_tick_matrix = np.empty_like(cov_matrix) # Used later for market factors
+
+        # Calculate factors per security (no cross-terms yet)
+        for index, (key, security) in enumerate(securities.items()):
+            if start_date is not None:
+                _, tick_time, return_series = security._set_start_tick(start_date)
+            else:
+                start_tick = self.tick_time[0]
+                tick_time = self.tick_time.copy()
+                return_series = self.return_series.copy()
+
+            return_mx = self.calc_return_matrix(
+                months=months, tick_time=tick_time, return_series=return_series
+            )
+
+            # Find the relevant market-correction factor
+            market_factor_index = np.argmin(np.abs(tick_intervals - start_tick))
+
+            (
+                return_value,
+                cov_value,
+                downside_cov_value,
+                upside_cov_value,
+                _,
+                _,
+            ) = self.calc_cov(return_mx)
+
+            return_vector[:, index] = return_value / market_std_factor[:,0,market_factor_index]
+            cov_matrix[:, index, index] = cov_value / market_std_factor[:,1,market_factor_index]
+            downside_cov_matrix[:, index, index] = downside_cov_value / market_std_factor[:,2,market_factor_index]
+            upside_cov_matrix[:, index, index] = upside_cov_value / market_std_factor[:,3,market_factor_index]
+
+        for index, (key, security) in enumerate(securities.items()):
+            if start_date is not None:
+                start_tick, tick_time, return_series = security._set_start_tick(start_date)
+            else:
+                start_tick = self.tick_time[0]
+                tick_time = self.tick_time.copy()
+                return_series = self.return_series.copy()
+
+            remaining_securities = dict(securities)
+            del remaining_securities[key]
+
+            for sub_index, (sub_key, sub_security) in enumerate(remaining_securities.items()):
+                sub_start_tick = np.max(start_tick, sub_security.tick_time[0])
+                sub_end_tick = np.min(tick_time[-1], sub_security.tick_time[-1])
+
+                # Slice main security
+                start_index = np.argmin(abs(tick_time - sub_start_tick))
+                end_index = np.argmin(abs(tick_time - sub_end_tick))
+                sub_tick_time = tick_time[start_index:end_index]
+                sub_return_series = return_series[start_index:end_index]
+
+                # Slice other security
+                start_index = np.argmin(abs(sub_security.tick_time - sub_start_tick))
+                end_index = np.argmin(abs(sub_security.tick_time - sub_end_tick))
+                other_sec_tick_time = sub_security.tick_time[start_index:end_index]
+                other_sec_return_series = sub_security.return_series[start_index:end_index]
+
+                if len(sub_tick_time) != len(other_sec_tick_time):
+                    raise ValueError(
+                        f"Tick time lengths are not equal for '{key}' and '{sub_key}': "
+                        f"{len(sub_tick_time)} != {len(other_sec_tick_time)}"
+                    )
+
+                sub_return_mx = self.calc_return_matrix(
+                    months=months, tick_time=sub_tick_time, return_series=sub_return_series
+                )
+                other_return_mx = self.calc_return_matrix(
+                    months=months,
+                    tick_time=other_sec_tick_time,
+                    return_series=other_sec_return_series,
+                )
+
+                _, cov, hedging_cov, gains_cov, _, _ = self.calc_cov(
+                    sub_return_mx, other_return_mx
+                )
+
+
         return
 
     def save_dataframe(
@@ -229,6 +325,51 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
         return
 
     ## Secondary functions:
+    def _calculate_market_factor(self, market_security_wildcard, months):
+        """Returns market scaling factors for return parameters based on data intervals"""
+        matches = [
+            key
+            for key in self.securities.keys()
+            if fnmatch.fnmatchcase(key, market_security_wildcard)
+        ]
+
+        if len(matches) == 0:
+            raise KeyError(f"No security matched wildcard '{market_security_wildcard}'.")
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple securities matched wildcard '{market_security_wildcard}': {matches}"
+            )
+
+        sec = self.securities[matches[0]]
+
+        tick_intervals = np.arange(
+            sec.tick_time[0], sec.tick_time[-1] - np.max(months) * STANDARD_MONTH_SIZE, 180
+        )
+        # Assign empty array (note, 8 is for the 8 different elements in the calc_std_1D output)
+        market_std_factor = np.empty((len(months), 8, len(tick_intervals)))
+        market_std_err_factor = np.empty_like(market_std_factor)
+        start_indices = np.asarray(tick_intervals - tick_intervals[0], dtype=int)
+
+        for ind, start_index in enumerate(start_indices):
+            tick_time = sec.tick_time[start_index:]
+            return_series = sec.return_series[start_index:]
+
+            return_matrix = sec.calc_return_matrix(
+                months=months, tick_time=tick_time, return_series=return_series
+            )
+
+            # Calculate statistics
+            market_std_factor[:, :, ind], market_std_err_factor[:, :, ind] = sec.calc_std_1D(
+                return_matrix, months
+            )
+
+        # Normalise to the full length market data (at ind = 0).
+        # This factor now provides a factor
+        market_std_factor /= market_std_factor[:, :, 0:1]
+        market_std_err_factor /= market_std_err_factor[:, :, 0:1]
+
+        return tick_intervals, market_std_factor, market_std_err_factor
+
     def load_securities(self, security_name, load=False, fx_df=None):
 
         index = self.dataframe["Name"][self.dataframe["Name"] == security_name].index[0]
@@ -250,9 +391,22 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
                     index_filepath = os.path.join(
                         self.folder, "..", "index", self.dataframe["Index_loc"][index]
                     )
-                    sec = Security(sec_filepath, index_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False, name=security_name)
+                    sec = Security(
+                        sec_filepath,
+                        index_filepath,
+                        dist_fund=dist_fund,
+                        fx_df=fx_df,
+                        calc_mat=False,
+                        name=security_name,
+                    )
                 else:
-                    sec = Security(sec_filepath, dist_fund=dist_fund, fx_df=fx_df, calc_mat=False, name=security_name)
+                    sec = Security(
+                        sec_filepath,
+                        dist_fund=dist_fund,
+                        fx_df=fx_df,
+                        calc_mat=False,
+                        name=security_name,
+                    )
 
                 # Create the entry in the dataframe based on the security name directly, rather than its name
                 # in the Excel data sheet
