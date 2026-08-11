@@ -10,6 +10,7 @@ from investment_analyser.backtrace import Backtrace
 from investment_analyser.data_loader import DataLoader
 from investment_analyser.plotter import Plotter
 from investment_analyser.security import Security, STANDARD_MONTH_SIZE
+from scipy.optimize import minimize
 
 MARKET_FACTOR_SECURITY = "*Core*S&P*500*"
 
@@ -217,33 +218,99 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
 
         return
 
-    def optimise(self, months=None, start_date=None):
+    def optimise(
+        self, loss_type="m+dstd", std_mult=1, months=None, months_weights=None, start_date=None
+    ):
+
+        self.calculate_covariance_matrices(months=months, start_date=start_date)
+
+        n_securities = np.shape(self.return_vector.shape)[1]
+        n_months = len(months)
+
+        if loss_type == "m+dstd":
+            months_weights = np.expand_dims(months_weights, axis=(1, 2))
+
+            cov_signs =  np.sign(self.downside_cov_matrix)
+            std_matrix = cov_signs * np.sqrt(np.abs(self.downside_cov_matrix))
+
+            return_vars = months_weights * np.dstack(
+                (self.return_vector, std_mult * std_matrix)
+            )
+
+            model = self.hedged_performance_loss
+
+            coeff0 = np.full(n_securities, 1.0 / n_securities)  # uniform starting point
+
+            bounds = [(0, 1)] * n_securities
+            constraints = [{'type': 'eq', 'fun': lambda c: np.sum(c) - 1}]
+
+            result = minimize(
+                model,
+                coeff0,
+                args=(return_vars,),
+                method='trust-constr',
+                bounds=bounds,
+                constraints=constraints,
+            )
+
+            self.coeffs = result.x
+
+            coeff_sqrt = np.sqrt(self.coeffs)
+            self.portfolio_downside_std = np.einsum('i, nij, j -> n', coeff_sqrt, return_vars[:, :, 1:], coeff_sqrt)
+            self.portfolio_return = np.einsum('i, ni -> n', self.coeffs, return_vars[:, :, 0])
+
+        return result.success
+
+    def hedged_performance_loss(self, return_vars, *args):
+        coeffs = np.array(args)
+        coeff_sqrt = np.sqrt(coeffs)
+
+        # Variance loss c^T A c for each matrix A
+        variance = np.einsum('i, nij, j -> n', coeff_sqrt, return_vars[:, :, 1:], coeff_sqrt)
+
+        # Gain term: c^T b for each vector b
+        gain = np.einsum('i, ni -> n', coeffs, return_vars[:, :, 0])
+
+        # Negative gain and positive variance as these are minimized
+        # so this way the gain is optimized and variance reduced
+        return np.mean(variance) - np.mean(gain)
+
+    def calculate_covariance_matrices(self, months=None, start_date=None):
         # Find the most optimised portfolio, given input on priorities
         securities = self.securities.copy()
 
-        tick_intervals, market_std_factor, market_std_err_factor = self._calculate_market_factor(
-            MARKET_FACTOR_SECURITY
-        )
+        if months is None:
+            months = self.months
+
+        (
+            tick_intervals,
+            market_return_factor,
+            market_cov_factor,
+            market_downside_cov_factor,
+            market_upside_cov_factor,
+        ) = self._calculate_market_factor(MARKET_FACTOR_SECURITY, months)
 
         no_sec = len(securities.keys())
         no_months = len(months)
 
-        return_vector = np.empty((no_months,no_sec))
-        cov_matrix = np.empty_like((no_months, no_sec, no_sec))
-        upside_cov_matrix = np.empty_like(cov_matrix)
-        downside_cov_matrix = np.empty_like(cov_matrix)
-        # start_tick_matrix = np.empty_like(cov_matrix) # Used later for market factors
+        self.return_vector = np.empty((no_months, no_sec))
+        self.cov_matrix = np.empty((no_months, no_sec, no_sec))
+        self.upside_cov_matrix = np.empty_like(self.cov_matrix)
+        self.downside_cov_matrix = np.empty_like(self.cov_matrix)
+        self.start_tick_matrix = np.empty((no_sec, no_sec))
+        self.end_tick_matrix = np.empty_like(self.start_tick_matrix)
 
         # Calculate factors per security (no cross-terms yet)
         for index, (key, security) in enumerate(securities.items()):
+            print(key)
             if start_date is not None:
                 _, tick_time, return_series = security._set_start_tick(start_date)
             else:
-                start_tick = self.tick_time[0]
-                tick_time = self.tick_time.copy()
-                return_series = self.return_series.copy()
+                start_tick = security.tick_time[0]
+                tick_time = security.tick_time.copy()
+                return_series = security.return_series.copy()
 
-            return_mx = self.calc_return_matrix(
+            return_mx = security.calc_return_matrix(
                 months=months, tick_time=tick_time, return_series=return_series
             )
 
@@ -259,35 +326,53 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
                 _,
             ) = self.calc_cov(return_mx)
 
-            return_vector[:, index] = return_value / market_std_factor[:,0,market_factor_index]
-            cov_matrix[:, index, index] = cov_value / market_std_factor[:,1,market_factor_index]
-            downside_cov_matrix[:, index, index] = downside_cov_value / market_std_factor[:,2,market_factor_index]
-            upside_cov_matrix[:, index, index] = upside_cov_value / market_std_factor[:,3,market_factor_index]
+            self.return_vector[:, index] = (
+                return_value[:, 0, 0] / market_return_factor[:, market_factor_index]
+            )
+            self.cov_matrix[:, index, index] = (
+                cov_value[:, 0, 0] / market_cov_factor[:, market_factor_index]
+            )
+            self.downside_cov_matrix[:, index, index] = (
+                downside_cov_value[:, 0, 0] / market_downside_cov_factor[:, market_factor_index]
+            )
+            self.upside_cov_matrix[:, index, index] = (
+                upside_cov_value[:, 0, 0] / market_upside_cov_factor[:, market_factor_index]
+            )
 
+            self.start_tick_matrix[index, index] = start_tick
+            self.end_tick_matrix[index, index] = security.tick_time[-1]
+
+        security_keys = list(securities.keys())
+
+        # Calculate all the cross-terms
         for index, (key, security) in enumerate(securities.items()):
+            print(key)
             if start_date is not None:
                 start_tick, tick_time, return_series = security._set_start_tick(start_date)
             else:
-                start_tick = self.tick_time[0]
-                tick_time = self.tick_time.copy()
-                return_series = self.return_series.copy()
+                start_tick = security.tick_time[0]
+                tick_time = security.tick_time.copy()
+                return_series = security.return_series.copy()
 
-            remaining_securities = dict(securities)
-            del remaining_securities[key]
+            del security_keys[0]
 
-            for sub_index, (sub_key, sub_security) in enumerate(remaining_securities.items()):
-                sub_start_tick = np.max(start_tick, sub_security.tick_time[0])
-                sub_end_tick = np.min(tick_time[-1], sub_security.tick_time[-1])
+            for i, sub_key in enumerate(security_keys):
+                print("sub key: ", sub_key, index, i)
+                sub_security = securities[sub_key]
+                sub_index = index + i + 1
+
+                sub_start_tick = max(start_tick, sub_security.tick_time[0])
+                sub_end_tick = min(tick_time[-1], sub_security.tick_time[-1])
 
                 # Slice main security
-                start_index = np.argmin(abs(tick_time - sub_start_tick))
-                end_index = np.argmin(abs(tick_time - sub_end_tick))
+                start_index = np.argmin(np.abs(tick_time - sub_start_tick))
+                end_index = np.argmin(np.abs(tick_time - sub_end_tick))
                 sub_tick_time = tick_time[start_index:end_index]
                 sub_return_series = return_series[start_index:end_index]
 
                 # Slice other security
-                start_index = np.argmin(abs(sub_security.tick_time - sub_start_tick))
-                end_index = np.argmin(abs(sub_security.tick_time - sub_end_tick))
+                start_index = np.argmin(np.abs(sub_security.tick_time - sub_start_tick))
+                end_index = np.argmin(np.abs(sub_security.tick_time - sub_end_tick))
                 other_sec_tick_time = sub_security.tick_time[start_index:end_index]
                 other_sec_return_series = sub_security.return_series[start_index:end_index]
 
@@ -297,19 +382,57 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
                         f"{len(sub_tick_time)} != {len(other_sec_tick_time)}"
                     )
 
-                sub_return_mx = self.calc_return_matrix(
+                sub_return_mx = security.calc_return_matrix(
                     months=months, tick_time=sub_tick_time, return_series=sub_return_series
                 )
-                other_return_mx = self.calc_return_matrix(
+                other_return_mx = sub_security.calc_return_matrix(
                     months=months,
                     tick_time=other_sec_tick_time,
                     return_series=other_sec_return_series,
                 )
 
-                _, cov, hedging_cov, gains_cov, _, _ = self.calc_cov(
+                _, cov_value, downside_cov_value, upside_cov_value, _, _ = self.calc_cov(
                     sub_return_mx, other_return_mx
                 )
 
+                cov_corr_factor = (self.cov_matrix[:, index, index] / cov_value[:, 0, 0]) * (
+                    self.cov_matrix[:, sub_index, sub_index] / cov_value[:, -1, -1]
+                )
+                downside_cov_corr_factor = (
+                    self.downside_cov_matrix[:, index, index] / downside_cov_value[:, 0, 0]
+                ) * (
+                    self.downside_cov_matrix[:, sub_index, sub_index]
+                    / downside_cov_value[:, -1, -1]
+                )
+                upside_cov_corr_factor = (
+                    self.upside_cov_matrix[:, index, index] / upside_cov_value[:, 0, 0]
+                ) * (self.upside_cov_matrix[:, sub_index, sub_index] / upside_cov_value[:, -1, -1])
+
+                self.cov_matrix[:, index, sub_index] = cov_value[:, 0, -1] / np.sqrt(
+                    cov_corr_factor
+                )
+                self.downside_cov_matrix[:, index, sub_index] = cov_value[:, 0, -1] / np.sqrt(
+                    downside_cov_corr_factor
+                )
+                self.upside_cov_matrix[:, index, sub_index] = cov_value[:, 0, -1] / np.sqrt(
+                    upside_cov_corr_factor
+                )
+
+                self.start_tick_matrix[index, sub_index] = sub_start_tick
+                self.end_tick_matrix[index, sub_index] = sub_end_tick
+
+        # Mirror the upper triangle into the lower triangle for all covariance matrices
+        self.cov_matrix = self.mirror_array_of_matrices_around_diagonal(self.cov_matrix)
+        self.downside_cov_matrix = self.mirror_array_of_matrices_around_diagonal(
+            self.downside_cov_matrix
+        )
+        self.upside_cov_matrix = self.mirror_array_of_matrices_around_diagonal(
+            self.upside_cov_matrix
+        )
+        self.start_tick_matrix = (
+            np.triu(self.start_tick_matrix) + np.triu(self.start_tick_matrix, k=1).T
+        )
+        self.end_tick_matrix = np.triu(self.end_tick_matrix) + np.triu(self.end_tick_matrix, k=1).T
 
         return
 
@@ -346,29 +469,43 @@ class Portfolio(Security, Plotter, DataLoader, Backtrace):
             sec.tick_time[0], sec.tick_time[-1] - np.max(months) * STANDARD_MONTH_SIZE, 180
         )
         # Assign empty array (note, 8 is for the 8 different elements in the calc_std_1D output)
-        market_std_factor = np.empty((len(months), 8, len(tick_intervals)))
-        market_std_err_factor = np.empty_like(market_std_factor)
+        return_vector = np.empty((len(months), len(tick_intervals)))
+        cov_matrix = np.empty_like(return_vector)
+        downside_cov_matrix = np.empty_like(return_vector)
+        upside_cov_matrix = np.empty_like(return_vector)
         start_indices = np.asarray(tick_intervals - tick_intervals[0], dtype=int)
 
         for ind, start_index in enumerate(start_indices):
             tick_time = sec.tick_time[start_index:]
             return_series = sec.return_series[start_index:]
 
-            return_matrix = sec.calc_return_matrix(
+            return_mx = sec.calc_return_matrix(
                 months=months, tick_time=tick_time, return_series=return_series
             )
 
             # Calculate statistics
-            market_std_factor[:, :, ind], market_std_err_factor[:, :, ind] = sec.calc_std_1D(
-                return_matrix, months
-            )
+            (
+                return_value,
+                cov_value,
+                downside_cov_value,
+                upside_cov_value,
+                _,
+                _,
+            ) = sec.calc_cov(return_mx)
+
+            return_vector[:, ind] = return_value[:, 0, 0]
+            cov_matrix[:, ind] = cov_value[:, 0, 0]
+            downside_cov_matrix[:, ind] = downside_cov_value[:, 0, 0]
+            upside_cov_matrix[:, ind] = upside_cov_value[:, 0, 0]
 
         # Normalise to the full length market data (at ind = 0).
         # This factor now provides a factor
-        market_std_factor /= market_std_factor[:, :, 0:1]
-        market_std_err_factor /= market_std_err_factor[:, :, 0:1]
+        return_vector /= return_vector[:, 0:1]
+        cov_matrix /= cov_matrix[:, 0:1]
+        downside_cov_matrix /= downside_cov_matrix[:, 0:1]
+        upside_cov_matrix /= upside_cov_matrix[:, 0:1]
 
-        return tick_intervals, market_std_factor, market_std_err_factor
+        return tick_intervals, return_vector, cov_matrix, downside_cov_matrix, upside_cov_matrix
 
     def load_securities(self, security_name, load=False, fx_df=None):
 

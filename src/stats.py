@@ -229,6 +229,9 @@ class Stats(Base):
 
         return means_tens, cov_sum, hedging_cov_sum, gains_cov_sum, n_elem, y_tens
 
+    def mirror_array_of_matrices_around_diagonal(self, A):
+        return np.triu(A) + np.triu(A, k=1).transpose(0, 2, 1)
+
     def __comb_std(
         self,
         means,
